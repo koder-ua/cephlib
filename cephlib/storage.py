@@ -125,7 +125,7 @@ class IStorable(object):
 class FSStorage(ISimpleStorage):
     """Store all data in files on FS"""
 
-    def __init__(self, root_path: str, existing: bool) -> None:
+    def __init__(self, root_path, existing):
         self.root_path = root_path
         self.existing = existing
         self.ignored = {'.', '..'}
@@ -144,7 +144,7 @@ class FSStorage(ISimpleStorage):
             with open(self._get_fname(path), "rb") as fd:
                 return fd.read()
         except FileNotFoundError as exc:
-            raise KeyError(path) from exc
+            raise KeyError(path)
 
     def rm(self, path):
         if os.path.isdir(path):
@@ -188,7 +188,7 @@ class FSStorage(ISimpleStorage):
     def sync(self):
         pass
 
-    def list(self, path: str):
+    def list(self, path):
         path = self._get_fname(path)
 
         if not os.path.exists(path):
@@ -203,6 +203,21 @@ class FSStorage(ISimpleStorage):
                     yield False, fobj.name
                 else:
                     yield True, fobj.name
+
+
+class RawSerializer(ISerializer):
+    """Serialize data to json"""
+    def pack(self, value):
+        if not isinstance(value, unicode):
+            value = value.encode("utf8")
+
+        if not isinstance(value, str):
+            raise ValueError("Can't serialize object {!r}".format(type(value)))
+
+        return value
+
+    def unpack(self, data):
+        return data
 
 
 class JsonSerializer(ISerializer):
@@ -341,7 +356,7 @@ class Storage:
         serialized = self.serializer.pack(dct_value)
         self.sstorage.put(serialized, "/".join(path))
 
-    def get(self, path: str, default=_Raise):
+    def get(self, path, default=_Raise):
         try:
             vl = self.sstorage.get(path)
         except:
@@ -353,7 +368,7 @@ class Storage:
     def rm(self, *path):
         self.sstorage.rm("/".join(path))
 
-    def load(self, obj_class, *path: str):
+    def load(self, obj_class, *path):
         return obj_class.fromraw(self.get("/".join(path)))
 
     # ---------------  List of values ----------------------------------------------------------------------------------
@@ -442,8 +457,16 @@ class Storage:
         self.array_storage.put(path, data, header, append_on_exists=append_on_exists)
 
 
-def make_storage(url, existing=False, safe=True):
+serializer_map = {
+    'safe': SAFEYAMLSerializer,
+    'yaml': YAMLSerializer,
+    'json': JsonSerializer,
+    'raw': RawSerializer
+}
+
+
+def make_storage(url, existing=False, serializer='safe'):
     fstor = FSStorage(url, existing)
     return Storage(fstor,
-                   SAFEYAMLSerializer() if safe else YAMLSerializer(),
+                   serializer_map[serializer](),
                    ArrayStorage(fstor) if ArrayStorage else None)

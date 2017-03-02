@@ -7,10 +7,11 @@ logger = logging.getLogger("cephlib")
 
 
 class OSDInfo:
-    def __init__(self, id, journal, storage):
+    def __init__(self, id, journal, storage, config):
         self.id = id
         self.journal = journal
         self.storage = storage
+        self.config = config
 
 
 def get_osds_nodes(rpc_run, extra_args=""):
@@ -34,12 +35,17 @@ def get_osds_nodes(rpc_run, extra_args=""):
             osd_cfg = rpc_run("ceph {} -n osd.{} --show-config".format(extra_args, osd_id))
 
             if osd_cfg.count("osd_journal =") != 1 or osd_cfg.count("osd_data =") != 1:
-                raise RuntimeError("Can't detect osd.{} journal or storage path".format(osd_id))
+                logger.warning("Can't detect osd.{} journal or storage path. Use default values".format(osd_id))
+                osd_data_path = "/var/lib/ceph/osd/ceph-{0}".format(osd_id)
+                osd_journal_path = "/var/lib/ceph/osd/ceph-{0}/journal".format(osd_id)
+            else:
+                osd_journal_path = osd_cfg.split("osd_journal =")[1].split("\n")[0].strip()
+                osd_data_path = osd_cfg.split("osd_data =")[1].split("\n")[0].strip()
 
-            osd_journal_path = osd_cfg.split("osd_journal =")[1].split("\n")[0].strip()
-            osd_data_path = osd_cfg.split("osd_data =")[1].split("\n")[0].strip()
-
-            ips.setdefault(ip, []).append(OSDInfo(osd_id, journal=osd_journal_path, storage=osd_data_path))
+            ips.setdefault(ip, []).append(OSDInfo(osd_id,
+                                                  journal=osd_journal_path,
+                                                  storage=osd_data_path,
+                                                  config=osd_cfg))
     return ips
 
 
@@ -59,7 +65,7 @@ def get_mons_nodes(rpc_run, extra_args=""):
                                "(all subsequent errors omitted)", mon_name)
                 first_error = False
         else:
-            ips[mon_data["rank"]] = mon_data["addr"].split(":")[0]
+            ips[mon_data["rank"]] = (mon_data["addr"].split(":")[0], mon_data["name"])
 
     return ips
 
