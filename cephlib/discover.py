@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger("cephlib")
 
 
-class OSDInfo:
+class OSDInfo(object):
     def __init__(self, id, journal, storage, config):
         self.id = id
         self.journal = journal
@@ -14,10 +14,10 @@ class OSDInfo:
         self.config = config
 
 
-def get_osds_nodes(rpc_run, extra_args=""):
+def get_osds_nodes(check_output, extra_args=""):
     """Get dict, which maps node ip to list of OSDInfo"""
 
-    data = rpc_run("ceph {} --format json osd dump".format(extra_args))
+    data = check_output("ceph {0} --format json osd dump".format(extra_args))
     jdata = json.loads(data)
 
     ips = {}
@@ -30,9 +30,9 @@ def get_osds_nodes(rpc_run, extra_args=""):
                                "(all subsequent errors omitted)", osd_id)
                 first_error = False
         else:
-            ip_port = osd_data["public_addr"]
+            ip_port = osd_data["public_addr"].encode("utf8")
             ip = ip_port.split(":")[0]
-            osd_cfg = rpc_run("ceph {} -n osd.{} --show-config".format(extra_args, osd_id))
+            osd_cfg = check_output("ceph {0} -n osd.{1} --show-config".format(extra_args, osd_id))
 
             if osd_cfg.count("osd_journal =") != 1 or osd_cfg.count("osd_data =") != 1:
                 logger.warning("Can't detect osd.{} journal or storage path. Use default values".format(osd_id))
@@ -49,10 +49,10 @@ def get_osds_nodes(rpc_run, extra_args=""):
     return ips
 
 
-def get_mons_nodes(rpc_run, extra_args=""):
+def get_mons_nodes(check_output, extra_args=""):
     """Return mapping mon_id => mon_ip"""
 
-    data = rpc_run("ceph {} --format json mon_status".format(extra_args))
+    data = check_output("ceph {0} --format json mon_status".format(extra_args))
     jdata = json.loads(data)
     ips = {}
 
@@ -65,7 +65,8 @@ def get_mons_nodes(rpc_run, extra_args=""):
                                "(all subsequent errors omitted)", mon_name)
                 first_error = False
         else:
-            ips[mon_data["rank"]] = (mon_data["addr"].split(":")[0], mon_data["name"])
+            addr = mon_data["addr"].encode("utf8")
+            ips[mon_data["rank"]] = (addr.split(":")[0], mon_data["name"].encode("utf8"))
 
     return ips
 

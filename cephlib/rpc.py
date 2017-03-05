@@ -42,7 +42,7 @@ def init_node(node_name, ssh_opts):
 
         log_file = '/tmp/ceph_agent.log'
         ip = socket.gethostbyname(node_name)
-        cmd = '{} {} server --listen-addr={}:0 --daemon --show-settings --stdout-file={}'
+        cmd = '{0} {1} server --listen-addr={2}:0 --daemon --show-settings --stdout-file={3}'
         out = check_output_ssh(node_name, ssh_opts, cmd.format(python_cmd, path, ip, log_file))
         data_j = json.loads(out)
         daemon_pid = data_j["daemon_pid"]
@@ -58,26 +58,29 @@ def init_node(node_name, ssh_opts):
     return rpc, daemon_pid
 
 
-def rpc_run_ch(node, cmd, timeout=60, input_data=None):
-    res = rpc_run(node, cmd, timeout, input_data)
-    assert res.code == 0, "{!r} is failed with code {}. output is {!r}".format(cmd, res.code, res.out)
+def rpc_run_ch(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout=0.01, check_timeout=0.1, log=True):
+    res = rpc_run(rpc, cmd, timeout, input_data, node_name=node_name,
+                  start_timeout=start_timeout, check_timeout=check_timeout, log=log)
+    assert res.code == 0, "{0!r} is failed with code {1}. output is {2!r}".format(cmd, res.code, res.out[-200:])
     return res.out
 
 
-def rpc_run(node, cmd, timeout=60, input_data=None):
-    logger.debug("%r: %s", node.name, cmd)
-    pid = node.rpc.cli.spawn(cmd, timeout=timeout, input_data=input_data)
+def rpc_run(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout=0.01, check_timeout=0.1, log=True):
+    if log:
+        logger.debug("%s: %s", node_name, cmd)
+
+    pid = rpc.cli.spawn(cmd, timeout=timeout, input_data=input_data)
     out = ""
     err = ""
 
-    time.sleep(0.1)
+    time.sleep(start_timeout)
 
     while True:
-        ecode, dout, derr = node.rpc.cli.get_updates(pid)
+        ecode, dout, derr = rpc.cli.get_updates(pid)
         out += dout
         err += err
         if ecode == 0:
             return CmdResult(0, out)
         elif ecode is not None:
             return CmdResult(ecode, err)
-        time.sleep(0.5)
+        time.sleep(check_timeout)

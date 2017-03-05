@@ -471,7 +471,7 @@ class CephSensor(ArraysSensor):
             self.prev_vals[osd_id] = self.set_osd_historic(duration, keep, osd_id)
 
     def get_updates(self):
-        res = super().get_updates()
+        res = super(CephSensor, self).get_updates()
 
         for osd_id, data in self.historic.items():
             res[("osd{}".format(osd_id), "historic")] = (None, data)
@@ -695,13 +695,14 @@ def rpc_stop():
 
 def rpc_get_dev_for_file(fname):
     out = subprocess.check_output(["df", fname])
-
     dev_link = out.strip().split("\n")[1].split()[0]
 
     if dev_link == 'udev':
         dev_link = fname
 
+    dev_link = os.path.abspath(dev_link)
     while os.path.islink(dev_link):
-        dev_link = os.readlink(dev_link)
-
+        dev_link_next = os.readlink(dev_link)
+        dev_link_next = os.path.join(os.path.dirname(dev_link), dev_link_next)
+        dev_link = os.path.abspath(dev_link_next)
     return dev_link

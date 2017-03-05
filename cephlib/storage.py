@@ -117,9 +117,9 @@ class IStorable(object):
     def raw(self):
         pass
 
-    @abc.abstractclassmethod
+    @classmethod
     def fromraw(cls, data):
-        pass
+        raise NotImplementedError()
 
 
 class FSStorage(ISimpleStorage):
@@ -135,7 +135,11 @@ class FSStorage(ISimpleStorage):
 
     def put(self, value, path):
         jpath = self._get_fname(path)
-        os.makedirs(os.path.dirname(jpath), exist_ok=True)
+
+        dpath = os.path.dirname(jpath)
+        if not os.path.exists(dpath):
+            os.makedirs(dpath)
+
         with open(jpath, "wb") as fd:
             fd.write(value)
 
@@ -143,7 +147,7 @@ class FSStorage(ISimpleStorage):
         try:
             with open(self._get_fname(path), "rb") as fd:
                 return fd.read()
-        except FileNotFoundError as exc:
+        except IOError as exc:
             raise KeyError(path)
 
     def rm(self, path):
@@ -158,14 +162,14 @@ class FSStorage(ISimpleStorage):
     def get_fd(self, path, mode="rb+"):
         jpath = self._get_fname(path)
 
-        if "cb" == mode:
+        if mode in ('cb', 'ct'):
             create_on_fail = True
-            mode = "rb+"
-            os.makedirs(os.path.dirname(jpath), exist_ok=True)
-        elif "ct" == mode:
-            create_on_fail = True
-            mode = "rt+"
-            os.makedirs(os.path.dirname(jpath), exist_ok=True)
+            mode = "rb+" if mode == 'cb' else 'rt+'
+
+            dpath = os.path.dirname(jpath)
+            if not os.path.exists(dpath):
+                os.makedirs(dpath)
+
         else:
             create_on_fail = False
 
@@ -197,12 +201,15 @@ class FSStorage(ISimpleStorage):
         if not os.path.isdir(path):
             raise OSError("{!r} is not a directory".format(path))
 
-        for fobj in os.scandir(path):
-            if fobj.path not in self.ignored:
-                if fobj.is_dir():
-                    yield False, fobj.name
-                else:
-                    yield True, fobj.name
+        if hasattr(os, 'scandir'):
+            for fobj in os.scandir(path):
+                if fobj.path not in self.ignored:
+                    yield not fobj.is_dir(), fobj.name
+        else:
+            for fname in os.listdir(path):
+                if fname not in self.ignored:
+                    fpath = os.path.join(path, fname)
+                    yield not os.path.isdir(fpath), fname
 
 
 class RawSerializer(ISerializer):
@@ -276,9 +283,10 @@ else:
         def get(self, path):
             with self.storage.get_fd(path, "rb") as fd:
                 stats = os.fstat(fd.fileno())
+                curr_atime = stats.st_atime_ns if hasattr(stats, "st_atime_ns") else stats.st_atime
                 if path in self.cache:
                     size, atime, obj, header = self.cache[path]
-                    if size == stats.st_size and atime == stats.st_atime_ns:
+                    if size == stats.st_size and atime == curr_atime:
                         return obj, header
 
                 header = fd.readline().decode(self.csv_file_encoding).strip().split(",")
@@ -296,7 +304,7 @@ else:
                     else:
                         arr.shape = (lines, columns)
 
-            self.cache[path] = (stats.st_size, stats.st_atime_ns, arr, header[1:])
+            self.cache[path] = (stats.st_size, curr_atime, arr, header[1:])
             return arr, header[1:]
 
         def put(self, path, data, header, append_on_exists=False):

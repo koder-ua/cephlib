@@ -1,4 +1,6 @@
 import os
+import re
+import sys
 import time
 import Queue
 import socket
@@ -43,7 +45,7 @@ CmdResult = collections.namedtuple("CmdResult", ["code", "out"])
 
 def run(cmd, log=True, input=None):
     if log:
-        logger.debug("CMD: %r", cmd)
+        logger.debug("CMD %r", cmd)
 
     if input is None:
         stdin = None
@@ -68,7 +70,7 @@ def run_ssh(host, ssh_opts, cmd, no_retry=False, max_retry=3, input=None):
     if no_retry:
         max_retry = 0
 
-    logger.debug("SSH:%s: %r", host, cmd)
+    logger.debug("SSH %s %r", host, cmd)
     while True:
         cmd = "ssh {0} {1} {2}".format(ssh_opts, host, cmd)
         res = run(cmd, False, input=input)
@@ -80,16 +82,16 @@ def run_ssh(host, ssh_opts, cmd, no_retry=False, max_retry=3, input=None):
         logger.warning("Retry SSH:%s: %r. Err is %r", host, cmd, res.out)
 
 
-def check_output(cmd, log=True, input=None):
+def check_output(cmd, log=True, input=None, out_limit=200):
     assert isinstance(log, bool)
     code, out = run(cmd, log=log, input=input)
-    assert code == 0, "{0!r} failed with code {1}. Out\n{2}".format(cmd, code, out)
+    assert code == 0, "{0!r} failed with code {1}. Out\n{2}".format(cmd, code, out[-out_limit:])
     return out
 
 
-def check_output_ssh(host, ssh_opts, cmd, no_retry=False, max_retry=3, input=None):
+def check_output_ssh(host, ssh_opts, cmd, no_retry=False, max_retry=3, input=None, out_limit=200):
     code, out = run_ssh(host, ssh_opts, cmd, no_retry=no_retry, max_retry=max_retry, input=input)
-    assert code == 0, "{0!r} failed with code {1}. Out\n{2}".format(cmd, code, out)
+    assert code == 0, "{0!r} failed with code {1}. Out\n{2}".format(cmd, code, out[-out_limit:])
     return out
 
 
@@ -121,7 +123,6 @@ def setup_loggers(loggers, default_level=logging.INFO, log_fname=None):
     root_logger.handlers = []
 
 
-
 def prun(runs, thcount):
     res_q = Queue.Queue()
     input_q = Queue.Queue()
@@ -135,11 +136,13 @@ def prun(runs, thcount):
                 pos, (func, args, kwargs) = input_q.get(False)
             except Queue.Empty:
                 return
+            except Exception:
+                logger.exception("In worker thread")
 
             try:
                 res_q.put((pos, True, func(*args, **kwargs)))
             except Exception as exc:
-                res_q.put((pos, False, exc))
+                res_q.put((pos, False, (exc, sys.exc_info()[2])))
 
     ths = [threading.Thread(target=worker) for i in range(thcount)]
 
@@ -157,20 +160,41 @@ def prun(runs, thcount):
     return [(ok, val) for _, ok, val in sorted(results)]
 
 
-def pmap(func, data, thcount=32 ):
+def pmap(func, data, thcount=32):
     return prun([(func, [val], {}) for val in data], thcount)
 
 
-def get_sshable_hosts(nodes, ssh_opts, thcount=32):
-    def check_host(node):
+def prun_check(runs, thcount):
+    res = []
+    for ok, val in prun(runs, thcount):
+        if not ok:
+            exc, tb = val
+            raise exc, None, tb
+        res.append(val)
+    return res
+
+
+def pmap_check(func, data, thcount=32):
+    res = []
+    for ok, val in pmap(func, data, thcount=thcount):
+        if not ok:
+            exc, tb = val
+            raise exc, None, tb
+        res.append(val)
+    return res
+
+
+def get_sshable_hosts(addrs, ssh_opts, thcount=32):
+    def check_host(addr):
         try:
-            socket.gethostbyname(node.name)
-            if check_output_ssh(node.name, ssh_opts, 'pwd').code == 0:
-                return node.name
+            if not re.match(r"\d+\.\d+\.\d+\.\d+$", addr):
+                socket.gethostbyname(addr)
+            if run_ssh(addr, ssh_opts, 'pwd').code == 0:
+                return addr
         except socket.gaierror:
             pass
 
-    results = pmap(check_host, nodes, thcount=thcount)
+    results = pmap(check_host, addrs, thcount=thcount)
     return [res for ok, res in results if ok and res is not None]
 
 
