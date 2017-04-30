@@ -5,10 +5,12 @@ This module contains interfaces for storage classes
 import os
 import re
 import abc
+import array
 import shutil
 import logging
 
 import json
+from .pyver import tostr
 
 try:
     import yaml
@@ -133,6 +135,9 @@ class FSStorage(ISimpleStorage):
     def _get_fname(self, path):
         return os.path.join(self.root_path, path)
 
+    def isdir(self, path):
+        return os.path.isdir(os.path.join(self.root_path, path))
+
     def put(self, value, path):
         jpath = self._get_fname(path)
 
@@ -147,7 +152,7 @@ class FSStorage(ISimpleStorage):
         try:
             with open(self._get_fname(path), "rb") as fd:
                 return fd.read()
-        except IOError as exc:
+        except IOError:
             raise KeyError(path)
 
     def rm(self, path):
@@ -211,12 +216,22 @@ class FSStorage(ISimpleStorage):
                     fpath = os.path.join(path, fname)
                     yield not os.path.isdir(fpath), fname
 
+    def put_array(self, data, path):
+        with self.get_fd(path, "cb") as fd:
+            fd.write(data.typecode)
+            fd.write(data)
+
+    def get_array(self, path):
+        with self.get_fd(path, "rb+") as fd:
+            data = array.array(fd.read(1))
+            data.fromstring(fd.read())
+        return data
+
 
 class RawSerializer(ISerializer):
     """Serialize data to json"""
     def pack(self, value):
-        if not isinstance(value, unicode):
-            value = value.encode("utf8")
+        value = tostr(value)
 
         if not isinstance(value, str):
             raise ValueError("Can't serialize object {!r}".format(type(value)))
@@ -257,7 +272,7 @@ if yaml:
         def pack(self, value):
             try:
                 return yaml.safe_dump(value, encoding="utf8")
-            except Exception:
+            except Exception as exc:
                 raise ValueError("Can't pickle object {!r} to yaml. Message: {}".format(type(value), exc))
 
         def unpack(self, data):
@@ -346,7 +361,7 @@ else:
             return self.__class__(self.storage.sub_storage(path))
 
 
-class Storage:
+class Storage(object):
     def __init__(self, sstorage, serializer, array_storage):
         self.sstorage = sstorage
         self.serializer = serializer
@@ -464,6 +479,12 @@ class Storage:
             raise ValueError("No ArrayStorage provided(probably no numpy module installed)")
         self.array_storage.put(path, data, header, append_on_exists=append_on_exists)
 
+    def get_array_simple(self, path):
+        return self.sstorage.get_array(path)
+
+    def put_array_simple(self, data, path):
+        return self.sstorage.put_array(data, path)
+
 
 serializer_map = {
     'safe': SAFEYAMLSerializer,
@@ -471,6 +492,103 @@ serializer_map = {
     'json': JsonSerializer,
     'raw': RawSerializer
 }
+
+
+class _Def(object):
+    pass
+
+
+class AttredStorage(object):
+    def __init__(self, storage, serializer, ext):
+        self.__dict__.update({
+            "_AttredStorage__storage": storage,
+            "_AttredStorage__serializer" : serializer,
+            "_AttredStorage__ext": ext,
+            "_AttredStorage__r": storage.root_path
+        })
+
+    def __load(self, spath, ext, dir_allowed=True):
+        # print("__load({!r}, ext={!r}, dir_allowed={!r})".format(spath, ext, dir_allowed))
+        path = spath.split("/")
+        curr = self
+
+        if ext is not None:
+            last = path[-1]
+            path = path[:-1]
+        else:
+            last = None
+
+        for step in path:
+            if not curr.__storage.isdir(step):
+                raise KeyError("Path {0!r} expected to be a dir, but it's a file at {1!r}".format(step, curr.__r))
+            curr = curr.__class__(curr.__storage.sub_storage(step), curr.__serializer, curr.__ext)
+
+        if not last:
+            return True, curr
+
+        if curr.__storage.isdir(last):
+            if dir_allowed:
+                return True, curr.__class__(curr.__storage.sub_storage(last), curr.__serializer, curr.__ext)
+            else:
+                raise KeyError("Path {0!r} expected to be a dir, but it's a file at {1!r}".format(last, curr.__r))
+
+        return False, curr.__storage.get(last + ("." + ext if ext != '' else ''))
+
+    def __getitem__(self, path):
+        isdir, val = self.__load(path, self.__ext)
+        return val if isdir else self.__serializer.unpack(val)
+
+    def __setitem__(self, path, val):
+        self.__storage.put(self.__serializer.pack(val), path + '.' + self.__ext)
+
+    def __setattr__(self, name, val):
+        self.__storage.put(self.__serializer.pack(val), name + '.' + self.__ext)
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError("Can't found file '{0}.{1}' or dir '{0}' at {2!r}. {3!s}"
+                                 .format(name, self.__ext, self.__r, exc))
+
+    def __str__(self):
+        return "{0.__class__.__name__}({0.__r})".format(self)
+
+    def __iter__(self):
+        return iter(self.__storage.list("."))
+
+    def get(self, path, default=None, ext=_Def):
+        try:
+            return self.__load(path, self.__ext if ext is _Def else ext, dir_allowed=False)[1]
+        except (AttributeError, KeyError):
+            return default
+
+    def put(self, path, val, ext=_Def):
+        if ext is _Def:
+            ext = self.__ext
+        return self.__storage.put(val, path + ("." + ext if ext != '' else ''))
+
+    def __len__(self):
+        return len(self.__storage.list("."))
+
+
+
+class JsonResultStorage(AttredStorage):
+    def __init__(self, storage, serializer=None, ext=None):
+        assert serializer is None or isinstance(serializer, JsonSerializer)
+        AttredStorage.__init__(self, storage, JsonSerializer() if serializer is None else serializer, 'json')
+
+
+class TxtResultStorage(AttredStorage):
+    def __init__(self, storage, serializer=None, ext=None):
+        assert serializer is None or isinstance(serializer, RawSerializer)
+        AttredStorage.__init__(self, storage, RawSerializer() if serializer is None else serializer, 'txt')
+
+
+class XMLResultStorage(AttredStorage):
+    def __init__(self, storage, serializer=None, ext=None):
+        assert serializer is None or isinstance(serializer, RawSerializer)
+        AttredStorage.__init__(self, storage, RawSerializer() if serializer is None else serializer, 'xml')
 
 
 def make_storage(url, existing=False, serializer='safe'):

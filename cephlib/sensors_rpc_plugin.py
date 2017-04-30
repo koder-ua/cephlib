@@ -1,3 +1,4 @@
+import re
 import os
 import sys
 import json
@@ -5,14 +6,52 @@ import time
 import zlib
 import array
 import pprint
+import struct
+import os.path
 import logging
+import tempfile
 import threading
 import traceback
 import subprocess
 import collections
 
 
-import Pool  # type: ignore
+try:
+    import libvirt
+except ImportError:
+    libvirt = None
+
+
+try:
+    import anydbm
+except ImportError:
+    anydbm = None
+
+
+try:
+    import Pool  # type: ignore
+except ImportError:
+    pass
+
+try:
+    from ceph_daemon import admin_socket
+except ImportError:
+    admin_socket = None
+
+IS_PYTHON3 = (sys.version_info >= (3,))
+
+if IS_PYTHON3:
+    from io import BytesIO as BIO
+    def tostr(vl):
+        if isinstance(vl, bytes):
+            return vl.decode('utf8', errors='replace')
+        return vl
+else:
+    from StringIO import StringIO as BIO
+    def tostr(vl):
+        if isinstance(vl, unicode):
+            return vl.encode('utf8')
+        return vl
 
 
 mod_name = "sensors"
@@ -165,8 +204,10 @@ class BlockIOSensor(ArraysSensor):
         (9, 'sectors_written', True, SECTOR_SIZE),
         (10, 'wtime', True, 1),
         (11, 'io_queue', False, 1),
-        (13, 'io_time', True, 1)
+        (12, 'io_time', True, 1),
+        (13, 'weighted_io_time', True, 1)
     ]
+    rbd_dev = re.compile(r"rbd\d+$")
 
     def __init__(self, *args, **kwargs):
         ArraysSensor.__init__(self, *args, **kwargs)
@@ -177,8 +218,9 @@ class BlockIOSensor(ArraysSensor):
         for line in open('/proc/diskstats'):
             vals = line.split()
             dev_name = vals[2]
-            if self.is_dev_accepted(dev_name) and not dev_name[-1].isdigit():
-                self.allowed_names.add(dev_name)
+            if self.is_dev_accepted(dev_name):
+                if not dev_name[-1].isdigit() or self.rbd_dev.match(dev_name):
+                    self.allowed_names.add(dev_name)
 
         self.collect(init_rel=True)
 
@@ -192,29 +234,77 @@ class BlockIOSensor(ArraysSensor):
 
             for pos, name, aggregated, coef in self.io_values_pos:
                 vl = int(vals[pos]) * coef
+
+                if dev_name == 'sdc' and name == 'io_time':
+                    if not os.path.exists("/tmp/sdc_iotime.log"):
+                        mode = 'w'
+                    else:
+                        mode = 'r+'
+
+                    with open("/tmp/sdc_iotime.log", mode) as fd:
+                        fd.seek(0, os.SEEK_END)
+                        fd.write("{0}\n".format(vl))
+
                 if aggregated:
                     self.add_relative(dev_name, name, vl)
                 elif not init_rel:
                     self.add_data(dev_name, name, int(vals[pos]))
 
 
+@provides("vm-io")
+class VMIOSensor(ArraysSensor):
+    def __init__(self, *args, **kwargs):
+        ArraysSensor.__init__(self, *args, **kwargs)
+        self.per_node_io = {}
+
+        if libvirt:
+            self.conn = libvirt.openReadOnly(None)
+            self.collect(init_rel=True)
+        else:
+            self.conn = None
+
+    def collect(self, init_rel=False):
+        if self.conn is None:
+            return
+
+        cum_stats = [0, 0, 0, 0]
+
+        for vm in self.conn.listAllDomains():
+            if vm.isActive():
+                did = vm.ID()
+                vm_stat = vm.blockStats('')
+                if did in self.per_node_io:
+                    prev_dstat = self.per_node_io[did]
+                    cum_stats[0] += vm_stat[0] - prev_dstat[0]
+                    cum_stats[1] += vm_stat[1] - prev_dstat[1]
+                    cum_stats[2] += vm_stat[2] - prev_dstat[2]
+                    cum_stats[3] += vm_stat[3] - prev_dstat[3]
+                else:
+                    self.per_node_io[did] = vm_stat[:-1]
+
+        self.add_data("vm_io", "reads_completed", cum_stats[0])
+        self.add_data("vm_io", "bytes_read", cum_stats[1])
+        self.add_data("vm_io", "writes_completed", cum_stats[2])
+        self.add_data("vm_io", "bytes_written", cum_stats[3])
+
+
+def get_interfaces():
+    for name in os.listdir("/sys/class/net"):
+        fpath = os.path.join("/sys/class/net", name)
+
+        if not os.path.islink(fpath):
+            continue
+
+        while os.path.islink(fpath):
+            fpath = os.path.abspath(
+                os.path.join(os.path.dirname(fpath),
+                             os.readlink(fpath)))
+
+        yield '/devices/virtual/' not in fpath, name
+
+
 @provides("net-io")
 class NetIOSensor(ArraysSensor):
-    #  1 - major number
-    #  2 - minor mumber
-    #  3 - device name
-    #  4 - reads completed successfully
-    #  5 - reads merged
-    #  6 - sectors read
-    #  7 - time spent reading (ms)
-    #  8 - writes completed
-    #  9 - writes merged
-    # 10 - sectors written
-    # 11 - time spent writing (ms)
-    # 12 - I/Os currently in progress
-    # 13 - time spent doing I/Os (ms)
-    # 14 - weighted time spent doing I/Os (ms)
-
     net_values_pos = [
         (0, 'recv_bytes', True),
         (1, 'recv_packets', True),
@@ -225,21 +315,13 @@ class NetIOSensor(ArraysSensor):
     def __init__(self, *args, **kwargs):
         ArraysSensor.__init__(self, *args, **kwargs)
 
-        if self.disallowed is None:
-            self.disallowed = ('docker', 'lo')
-
-        if self.allowed is None:
-            self.allowed = ('eth',)
+        assert self.allowed is None
+        assert self.disallowed is None
 
         for _, _, aggregated in self.net_values_pos:
             assert aggregated, "Non-aggregated values is not supported in net sensor"
 
-        for line in open('/proc/net/dev').readlines()[2:]:
-            dev_name, stats = line.split(":", 1)
-            dev_name = dev_name.strip()
-            if self.is_dev_accepted(dev_name):
-                self.allowed_names.add(dev_name)
-
+        self.allowed_names.update(dev_name for is_phy, dev_name in get_interfaces() if is_phy)
         self.collect(init_rel=True)
 
     def collect(self, init_rel=False):
@@ -353,13 +435,29 @@ class SystemCPUSensor(ArraysSensor):
     # 7 - softirq: servicing softirqs
 
     cpu_values_pos = [
-        (1, 'user_processes', True),
-        (2, 'nice_processes', True),
-        (3, 'system_processes', True),
-        (4, 'idle_time', True),
+        (1, 'user', True),
+        (2, 'nice', True),
+        (3, 'sys', True),
+        (4, 'idle', True),
+        (5, 'iowait', True),
+        (6, 'irq', True),
+        (7, 'sirq', True),
+        (8, 'steal', True),
+        (9, 'guest', True),
     ]
 
-    def collect(self):
+    def __init__(self, *args, **kwargs):
+        ArraysSensor.__init__(self, *args, **kwargs)
+
+        assert self.allowed is None
+        assert self.disallowed is None
+
+        for _, _, aggregated in self.cpu_values_pos:
+            assert aggregated, "Non-aggregated values is not supported in cpu sensor"
+
+        self.collect(init_rel=True)
+
+    def collect(self, init_rel=False):
         # calculate core count
         core_count = 0
 
@@ -369,20 +467,21 @@ class SystemCPUSensor(ArraysSensor):
 
             if dev_name == 'cpu':
                 for pos, name, _ in self.cpu_values_pos:
-                    self.add_data(dev_name, name, int(vals[pos]))
-            elif dev_name == 'procs_blocked':
+                    self.add_relative(dev_name, name, int(vals[pos]))
+            elif dev_name == 'procs_blocked' and not init_rel:
                 self.add_data("cpu", "procs_blocked", int(vals[1]))
-            elif dev_name.startswith('cpu'):
+            elif dev_name.startswith('cpu') and not init_rel:
                 core_count += 1
 
-        # procs in queue
-        TASKSPOS = 3
-        vals = open('/proc/loadavg').read().split()
-        ready_procs = vals[TASKSPOS].partition('/')[0]
+        if not init_rel:
+            # procs in queue
+            TASKSPOS = 3
+            vals = open('/proc/loadavg').read().split()
+            ready_procs = vals[TASKSPOS].partition('/')[0]
 
-        # dec on current proc
-        procs_queue = (float(ready_procs) - 1) / core_count
-        self.add_data("cpu", "procs_queue_x10", int(procs_queue * 10))
+            # dec on current proc
+            procs_queue = (float(ready_procs) - 1) / core_count
+            self.add_data("cpu", "procs_queue_x10", int(procs_queue * 10))
 
 
 @provides("system-ram")
@@ -411,10 +510,112 @@ class SystemRAMSensor(ArraysSensor):
                 self.add_data("ram", field, int(vals[1]))
 
 
-try:
-    from ceph_daemon import admin_socket
-except ImportError:
-    admin_socket = None
+def get_val(dct, path):
+    if '/' in path:
+        root, next = path.split('/', 1)
+        return get_val(dct[root], next)
+    return dct[path]
+
+
+CephOp = collections.namedtuple("CephOp", "age descr_idx duration initiated_at status stages extra1 extra2")
+ALL_STAGES = [
+    "queued_for_pg",
+    "reached_pg",
+    "started",
+    "commit_queued_for_journal_write",
+    "waiting_for_subop",
+    "write_thread_in_journal_buffer",
+    "op_commit",
+    "op_applied",
+    "sub_op_applied",
+    "journaled_completion_queued",
+    "commit_sent",
+    "done",
+    "subop_commit_rec",
+    "subop_apply_rec"
+]
+
+
+CEPH_OP_DESCR_IDX = {
+    "osd_repop_reply": 0,
+    "osd_op": 1,
+    "osd_repop": 2
+}
+
+
+STAGE_TIME_FORMAT = 'I'
+STAGE_TIME_FORMAT_SZ = struct.calcsize(STAGE_TIME_FORMAT)
+MAX_STAGE_TIME = 2 ** 32 - 1
+
+
+waiting_subop = "waiting for subops from"
+sub_op_commit = "sub_op_commit_rec from"
+sub_op_applied = "sub_op_applied_rec from"
+
+
+ceph_op_format = "!BfBfL" + STAGE_TIME_FORMAT * len(ALL_STAGES)
+OP_SIZE = struct.calcsize(ceph_op_format)
+VERSION = 1
+BOR = 'EF34'
+EOR = 'AB12'
+assert struct.calcsize('!B') == 1
+
+
+def pack_ceph_op(op):
+    extra = struct.pack("!B" + STAGE_TIME_FORMAT * len(op.extra1), len(op.extra1), *op.extra1)
+    extra += struct.pack("!B" + STAGE_TIME_FORMAT * len(op.extra2), len(op.extra2), *op.extra2)
+    dt = struct.pack(ceph_op_format, VERSION, op.age, op.descr_idx, op.duration,
+                     op.initiated_at / 1000000,
+                     *[(0 if tm is None else tm) for tm in op.stages]) + extra
+    return BOR + dt + EOR
+
+
+def unpack_ceph_op(stream):
+    assert BOR == stream.read(len(BOR))
+    vls = struct.unpack(ceph_op_format, stream.read(OP_SIZE))
+    version, age, descr_idx, duration, init_at = vls[:5]
+    stages = list(vls[5:])
+    assert version == VERSION
+
+    sz1 = ord(stream.read(1))
+    if sz1:
+        extra_stages1 = list(struct.unpack("!" + STAGE_TIME_FORMAT * sz1, stream.read(STAGE_TIME_FORMAT_SZ * sz1)))
+    else:
+        extra_stages1 = []
+
+    sz2 = ord(stream.read(1))
+    if sz2:
+        extra_stages2 = list(struct.unpack("!" + STAGE_TIME_FORMAT * sz2, stream.read(STAGE_TIME_FORMAT_SZ * sz2)))
+    else:
+        extra_stages2 = []
+
+    assert EOR == stream.read(len(EOR))
+    return CephOp(age, descr_idx, duration, init_at * 1000000, None, stages, extra_stages1, extra_stages2)
+
+
+def to_ctime_ms(time_str):
+    dt_s, micro_sec = time_str.split('.')
+    dt = time.strptime(dt_s, '%Y-%m-%d %H:%M:%S')
+    return int(time.mktime(dt) * 1000000 + int(micro_sec))
+
+
+LN_FORMAT = '!I'
+LN_FORMAT_SZ = struct.calcsize(LN_FORMAT)
+
+
+def merge_strings(strs):
+    res = ""
+    for string in strs:
+        res += struct.pack(LN_FORMAT, len(string)) + string
+    return res
+
+
+def unmerge_strings(blob):
+    offset = 0
+    while offset < len(blob):
+        ln, = struct.unpack(LN_FORMAT, blob[offset: offset + LN_FORMAT_SZ])
+        yield blob[offset + LN_FORMAT_SZ: offset + LN_FORMAT_SZ + ln]
+        offset += LN_FORMAT_SZ + ln
 
 
 @provides("ceph")
@@ -422,33 +623,95 @@ class CephSensor(ArraysSensor):
 
     historic_duration = 2
     historic_size = 200
+    use_disk = False
 
-    def run_ceph_daemon_cmd(self, osd_id, *args):
+    def __init__(self, *args, **kwargs):
+        ArraysSensor.__init__(self, *args, **kwargs)
+        self.cluster = self.params.get('cluster', 'ceph')
+        self.prev_vals = {}
+
+        sources = self.params.get('sources', [])
+        self.historic = {} if 'historic' in sources else None
+        self.historic_js = {} if 'historic_js' in sources else None
+        self.perf_dump = {} if 'perf_dump' in sources else None
+
+        if sources and self.use_disk:
+            fd, self.stor_fname = tempfile.mkstemp()
+            os.close(fd)
+            self.disk_stor = anydbm.open(self.stor_fname)
+        else:
+            self.disk_stor = None
+
+        self.prev_historic = set()
+
+        if self.params['osds'] == "all":
+            self.osd_ids = []
+            for name in os.listdir('/var/lib/ceph/osd'):
+                rr = re.match(r"ceph-\d+", name)
+                if rr:
+                    self.osd_ids.append(name.split("-")[1])
+        else:
+            self.osd_ids = self.params['osds'][:]
+
+        if 'historic' in self.params.get('sources', {}):
+            for osd_id in self.osd_ids:
+                self.prev_vals[osd_id] = self.set_osd_historic(self.historic_duration, self.historic_size, osd_id)
+
+    def run_ceph_daemon_cmd(self, osd_id, args):
         asok = "/var/run/ceph/{}-osd.{}.asok".format(self.cluster, osd_id)
         if admin_socket:
-            res = admin_socket(asok, args)
+            res = admin_socket(asok, list(args.split()))
         else:
-            res = subprocess.check_output("ceph daemon {} {}".format(asok, " ".join(args)), shell=True)
+            res = subprocess.check_output("ceph daemon {} {}".format(asok, args), shell=True)
 
         return res
 
+    def store_to_db(self, metric, osd_id, data):
+        key = "{0}.{1}.{2}".format(metric, osd_id, int(time.time() * 100))
+        self.disk_stor[key] = data
+
     def collect(self):
-        def get_val(dct, path):
-            if '/' in path:
-                root, next = path.split('/', 1)
-                return get_val(dct[root], next)
-            return dct[path]
+        for osd_id in self.osd_ids:
+            if self.historic is not None:
+                ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
+                ops_json_z = zlib.compress(ops_json)
+                if self.historic_js is not None:
+                    if self.disk_stor:
+                        self.store_to_db('historic_js', osd_id, ops_json_z)
+                    else:
+                        self.historic_js.setdefault(osd_id, []).append(ops_json_z)
 
-        for osd_id in self.params['osds']:
-            data = json.loads(self.run_ceph_daemon_cmd(osd_id, 'perf', 'dump'))
-            for key_name in self.params['counters']:
-                self.add_data("osd{}".format(osd_id), key_name.replace("/", "."), get_val(data, key_name))
+                curr = set()
 
-            if 'historic' in self.params.get('sources', {}):
-                self.historic.setdefault(osd_id, []).append(self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops"))
+                new_ops = []
+                for op in json.loads(ops_json)['Ops']:
+                    curr.add(op['description'])
+                    if op['description'] in self.prev_historic:
+                        continue
+                    op_obj = self.parse_op(op)
+                    if op_obj:
+                        new_ops.append(op_obj)
 
-            if 'in_flight' in self.params.get('sources', {}):
-                self.in_flight.setdefault(osd_id, []).append(self.run_ceph_daemon_cmd(osd_id, "dump_ops_in_flight"))
+                data = "".join(pack_ceph_op(op_obj) for op_obj in new_ops)
+                data_z = zlib.compress(data)
+                if self.disk_stor:
+                    self.store_to_db('historic', osd_id, data_z)
+                else:
+                    self.historic.setdefault(osd_id, []).append(data_z)
+
+                self.prev_historic = curr
+
+            if 'in_flight' in self.params.get('sources', []):
+                raise NotImplementedError()
+
+            if self.perf_dump is not None:
+                data = self.run_ceph_daemon_cmd(osd_id, 'perf dump')
+                data_z = zlib.compress(data)
+                if self.disk_stor:
+                    self.store_to_db('perf_dump', osd_id, data_z)
+                else:
+                    self.perf_dump.setdefault(osd_id, []).append(data_z)
+
 
     def set_osd_historic(self, duration, keep, osd_id):
         data = json.loads(self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops"))
@@ -456,15 +719,59 @@ class CephSensor(ArraysSensor):
         self.run_ceph_daemon_cmd(osd_id, "config set osd_op_history_size {}".format(keep))
         return (data["duration to keep"], data["num to keep"])
 
-    def init(self):
-        self.cluster = self.params['cluster']
-        self.prev_vals = {}
-        self.historic = {}
-        self.in_flight = {}
+    @classmethod
+    def parse_op(cls, op):
+        descr = op['description']
+        if descr.startswith('osd_repop('):
+            # slave op
+            assert len(op['type_data']) == 2
+            tp, steps = op['type_data']
+        elif descr.startswith('osd_op('):
+            # master op
+            assert len(op['type_data']) == 3
+            tp, _, steps = op['type_data']
+        elif descr.startswith('osd_repop_reply('):
+            # ?????
+            assert len(op['type_data']) == 2
+            tp, steps = op['type_data']
+        else:
+            logger.warning("Can't parse op %r\n%r", descr, op)
+            return None
+            # raise ValueError("Can't parse op {0!r}".format(descr))
 
-        if 'historic' in self.params.get('sources', {}):
-            for osd_id in self.params['osds']:
-                self.prev_vals[osd_id] = self.set_osd_historic(self.historic_duration, self.historic_size, osd_id)
+        step_timings = [None] * len(ALL_STAGES)
+        extra1 = []
+        extra2 = []
+        initiated_at = to_ctime_ms(op['initiated_at'])
+        assert steps[0]['event'] == 'initiated'
+
+        for step in steps[1:]:
+            name = step['event']
+            tm = to_ctime_ms(step['time']) - initiated_at
+
+            if tm > MAX_STAGE_TIME:
+                tm = MAX_STAGE_TIME
+
+            if name.startswith(waiting_subop):
+                name = 'waiting_for_subop'
+
+            try:
+                step_timings[ALL_STAGES.index(name)] = tm
+            except ValueError:
+                if name.startswith(sub_op_commit):
+                    extra1.append(tm)
+                elif name.startswith(sub_op_applied):
+                    extra2.append(tm)
+                else:
+                    raise ValueError("Unknown stage type {0!r}".format(name))
+        return CephOp(age=op['age'],
+                      descr_idx=CEPH_OP_DESCR_IDX[descr.split("(", 1)[0]],
+                      duration=op['duration'],
+                      initiated_at=initiated_at,
+                      status=tp,
+                      stages=step_timings,
+                      extra1=extra1,
+                      extra2=extra2)
 
     def stop(self):
         for osd_id, (duration, keep) in self.prev_vals.items():
@@ -472,38 +779,52 @@ class CephSensor(ArraysSensor):
 
     def get_updates(self):
         res = super(CephSensor, self).get_updates()
+        if self.disk_stor:
+            raise NotImplementedError("Updates from disk aren't implemented")
+        else:
+            if self.historic:
+                for osd_id, packed_ops in self.historic.items():
+                    res[("osd{}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
+                self.historic = {}
 
-        for osd_id, data in self.historic.items():
-            res[("osd{}".format(osd_id), "historic")] = (None, data)
+            if self.historic_js:
+                for osd_id, ops in self.historic_js.items():
+                    res[("osd{}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
+                self.historic_js = {}
 
-        self.historic = {}
-
-        for osd_id, data in self.in_flight.items():
-            res[("osd{}".format(osd_id), "in_flight")] = (None, data)
-
-        self.in_flight = {}
+            if self.perf_dump:
+                for osd_id, ops in self.perf_dump.items():
+                    res[("osd{}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
+                self.perf_dump = {}
 
         return res
 
     @classmethod
-    def unpack_results(cls, device, metric, packed, typecode):
-        if metric in ('historic', 'in_flight'):
-            assert typecode is None
-            return packed
+    def unpack_historic(cls, packed):
+        return cls.unpack_historic_fd(BIO(packed), len(packed))
 
-        arr = array.array(typecode)
-        if sys.version_info >= (3, 0, 0):
-            arr.frombytes(packed)
+    @classmethod
+    def unpack_historic_fd(cls, fd, size):
+        while fd.tell() < size:
+            yield unpack_ceph_op(fd)
+
+    @classmethod
+    def unpack_results(cls, device, metric, packed_z, typecode):
+        raise NotImplementedError()
+
+    @staticmethod
+    def split_results(metric, packed_z):
+        packed = (zlib.decompress(chunk) for chunk in unmerge_strings(packed_z))
+        if metric == 'historic':
+            if IS_PYTHON3:
+                return b"".join(packed)
+            return "".join(packed)
+        elif metric in ('historic_js', 'perf_dump'):
+            if IS_PYTHON3:
+                return ("[" + ",\n".join(chunk.decode('utf8').strip() for chunk in packed) + "]").encode('utf8')
+            return "[" + ",\n".join(chunk.strip() for chunk in packed) + "]"
         else:
-            arr.fromstring(packed)
-
-        return arr
-
-
-class VMSensor(ArraysSensor):
-    # * virsh domblkstat XXX
-    # * virsh domifstat XXX
-    pass
+            assert False, "Unknown metric {0!r}".format(metric)
 
 
 class SensorsData(object):
@@ -531,19 +852,25 @@ def collect(sensors_config):
     return curr
 
 
+# {
+#     "pool_sz": 32,
+#     "block-io": {"allow": "sd"},
+#     "net-io": {},
+#     "perprocess-cpu": {},
+#     "perprocess-ram": {},
+#     "system-cpu": {},
+#     "system-ram": {},
+#     "ceph": {"osds": []},
+# }
+
+
 def sensors_bg_thread(sensors_config, sdata):
     try:
-        next_collect_at = time.time()
-        if "pool_sz" in sensors_config:
-            sensors_config = sensors_config.copy()
-            pool_sz = sensors_config.pop("pool_sz")
-        else:
-            pool_sz = 32
+        sensors_config = sensors_config.copy()
+        pool_sz = sensors_config.pop("pool_sz", 32)
+        pool = Pool(pool_sz) if pool_sz != 0 else None
 
-        if pool_sz != 0:
-            pool = Pool(sensors_config.get("pool_sz"))
-        else:
-            pool = None
+        next_collect_at = time.time()
 
         # prepare sensor classes
         with sdata.cond:
@@ -581,16 +908,25 @@ def sensors_bg_thread(sensors_config, sdata):
             with sdata.cond:
                 sdata.collected_at.append(int(ctm * 1000000))
                 if pool is not None:
-                    caller = lambda x: x()
+
+                    def caller(x):
+                        try:
+                            return x()
+                        except:
+                            logger.exception("During %r", x)
+                            raise
+
                     for ok, val in pool.map(caller, [sensor.collect for sensor in sdata.sensors.values()]):
                         if not ok:
                             raise val
                 else:
                     for sensor in sdata.sensors.values():
                         sensor.collect()
+
                 etm = time.time()
                 sdata.collected_at.append(int(etm * 1000000))
-                logger.debug("Add data to collected_at - %s, %s", ctm, etm)
+
+            logger.debug("Add data to collected_at - %s, %s", ctm, etm)
 
             if etm - ctm > 0.1:
                 # TODO(koder): need to signal that something in not really ok with sensor collecting
@@ -627,22 +963,34 @@ def rpc_start(sensors_config):
 
 
 def unpack_rpc_updates(res_tuple):
+    """
+    :param res_tuple: 
+    :return: Iterator[sensor_path:str, data: Any, is_parsed: bool] 
+    """
     offset_map, compressed_blob, compressed_collected_at_b = res_tuple
     blob = zlib.decompress(compressed_blob)
     collected_at_b = zlib.decompress(compressed_collected_at_b)
     collected_at = array.array(time_array_typechar)
-    collected_at.frombytes(collected_at_b)
-    yield 'collected_at', collected_at
+
+    if IS_PYTHON3:
+        collected_at.frombytes(collected_at_b)
+    else:
+        collected_at.fromstring(collected_at_b)
+
+    yield 'collected_at', collected_at, True
 
     # TODO: data is unpacked/repacked here with no reason
     for sensor_path, (offset, size, typecode) in offset_map.items():
         sensor_path = sensor_path.decode("utf8")
         sensor_name, device, metric = sensor_path.split('.', 2)
-        sensor_data = SensorsMap[sensor_name].unpack_results(device,
-                                                             metric,
-                                                             blob[offset:offset + size],
-                                                             typecode.decode("ascii"))
-        yield sensor_path, sensor_data
+        if sensor_name == 'ceph' and metric in {'historic', 'historic_js', 'perf_dump'}:
+            yield sensor_path, CephSensor.split_results(metric, blob[offset:offset + size]), False
+        else:
+            sensor_data = SensorsMap[sensor_name].unpack_results(device,
+                                                                 metric,
+                                                                 blob[offset:offset + size],
+                                                                 typecode.decode("ascii") if typecode else None)
+            yield sensor_path, sensor_data, True
 
 
 def rpc_get_updates():
@@ -693,16 +1041,18 @@ def rpc_stop():
     return res
 
 
-def rpc_get_dev_for_file(fname):
-    out = subprocess.check_output(["df", fname])
-    dev_link = out.strip().split("\n")[1].split()[0]
+def rpc_find_pids_for_cmd(bname):
+    from distutils import spawn
+    bin_path = spawn.find_executable(bname)
 
-    if dev_link == 'udev':
-        dev_link = fname
+    if not bin_path:
+        raise NameError("Can't found binary path for {0!r}".format(bname))
 
-    dev_link = os.path.abspath(dev_link)
-    while os.path.islink(dev_link):
-        dev_link_next = os.readlink(dev_link)
-        dev_link_next = os.path.join(os.path.dirname(dev_link), dev_link_next)
-        dev_link = os.path.abspath(dev_link_next)
-    return dev_link
+    res = []
+    for name in os.listdir('/proc'):
+        if name.isdigit() and os.path.isdir(os.path.join('/proc', name)):
+            exe = os.path.join('/proc', name, 'exe')
+            if os.path.exists(exe) and os.path.islink(exe) and bin_path == os.readlink(exe):
+                res.append(int(name))
+
+    return res

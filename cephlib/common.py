@@ -2,7 +2,7 @@ import os
 import re
 import sys
 import time
-import Queue
+import json
 import socket
 import atexit
 import logging
@@ -10,6 +10,8 @@ import tempfile
 import threading
 import subprocess
 import collections
+
+from .pyver import queue, raise_me, logging_config
 
 
 logger = logging.getLogger("cmd")
@@ -123,9 +125,25 @@ def setup_loggers(loggers, default_level=logging.INFO, log_fname=None):
     root_logger.handlers = []
 
 
+def setup_logging(log_config_fname=None, log_file=None, log_level=None, log_config_obj=None):
+    if log_config_obj:
+        assert not log_config_fname
+        log_config = log_config_obj
+    else:
+        log_config = json.load(open(log_config_fname))
+
+    if log_file is not None:
+        log_config["handlers"]["log_file"]["filename"] = log_file
+
+    if log_level is not None:
+        log_config["handlers"]["console"]["level"] = log_level
+
+    logging_config.dictConfig(log_config)
+
+
 def prun(runs, thcount):
-    res_q = Queue.Queue()
-    input_q = Queue.Queue()
+    res_q = queue.Queue()
+    input_q = queue.Queue()
 
     for num, run_info in enumerate(runs):
         input_q.put((num, run_info))
@@ -134,7 +152,7 @@ def prun(runs, thcount):
         while True:
             try:
                 pos, (func, args, kwargs) = input_q.get(False)
-            except Queue.Empty:
+            except queue.Empty:
                 return
             except Exception:
                 logger.exception("In worker thread")
@@ -169,7 +187,7 @@ def prun_check(runs, thcount):
     for ok, val in prun(runs, thcount):
         if not ok:
             exc, tb = val
-            raise exc, None, tb
+            raise_me(exc, tb)
         res.append(val)
     return res
 
@@ -179,7 +197,7 @@ def pmap_check(func, data, thcount=32):
     for ok, val in pmap(func, data, thcount=thcount):
         if not ok:
             exc, tb = val
-            raise exc, None, tb
+            raise_me(exc, tb)
         res.append(val)
     return res
 
@@ -219,3 +237,78 @@ def clean_tmp_files():
 
 
 atexit.register(clean_tmp_files)
+
+
+class AttredDict(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+
+def float2str(val, digits=3):
+    if digits < 1:
+        raise ValueError("digits must be >= 1")
+
+    if val < 0:
+        return '-' + float2str(-val, digits=digits)
+
+    if val < 1E-10:
+        return '0'
+
+    if val < 0.1:
+        return ("{0:.%se}" % (digits - 1,)).format(val)
+
+    if val < 1:
+        return ("{0:.%sf}" % (digits,)).format(val)
+
+    if val < 10 ** digits and (isinstance(val, int) or val >= 10 ** (digits - 1)):
+        return str(int(val))
+
+    for idx in range(1, digits):
+        if val < 10 ** idx:
+            return ("{0:%s.%sf}" % (idx, digits - idx)).format(val)
+
+    for idx in range(1, 4):
+        if val < 10 ** (idx + digits):
+            return str(int(val) // (10 ** idx) * (10 ** idx))
+
+    return "{0:.2e}".format(val)
+
+
+def floats2str(vals, digits=3, width=8):
+    if digits < 1:
+        raise ValueError("digits must be >= 1")
+
+    svals = [float2str(val) for val in vals]
+    max_after_dot = 0
+    max_before_dot = 0
+
+    for sval in svals:
+        if 'e' not in sval and 'E' not in sval:
+            if '.' in sval:
+                bf, af = sval.split('.')
+                max_after_dot = max(max_after_dot, len(af))
+                max_before_dot = max(max_before_dot, len(bf))
+            else:
+                max_before_dot = max(max_before_dot, len(sval))
+
+    if max_after_dot > 0:
+        format_dt = "{:>%ss}.{:<%ss}" % (width - 1 - max_after_dot, max_after_dot)
+        format = "{:>%ss}%s" % (width - 1 - max_after_dot, " " * (1 + max_after_dot))
+    else:
+        format_dt = None
+        format = "{:>%ss}" % (width,)
+
+    result = []
+    for sval in svals:
+        if 'e' in sval or 'E' in sval:
+            result.append(sval)
+        else:
+            if '.' in sval:
+                result.append(format_dt.format(*sval.split('.')))
+            else:
+                result.append(format.format(sval))
+    return result
+
