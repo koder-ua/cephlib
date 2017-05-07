@@ -83,11 +83,11 @@ def process_heatmap_data(values, bin_ranges, cut_percentile=(0.02, 0.98), ybins=
     return numpy.array([numpy.histogram(src_line, bins)[0] for src_line in nvalues]), bins
 
 
-def plot_heatmap(ax, hmap_vals, chunk_ranges, bins=None):
+def plot_heatmap(ax, hmap_vals, chunk_ranges, bins=None, cmap=None):
     assert len(hmap_vals.shape) == 1
     heatmap, bins = process_heatmap_data(hmap_vals, chunk_ranges, bins=bins)
     labels = list(map(float2str, bins))
-    seaborn.heatmap(heatmap[:,::-1].T, xticklabels=False, cmap="Blues", ax=ax)
+    seaborn.heatmap(heatmap[:,::-1].T, xticklabels=False, cmap=cmap, ax=ax)
     ax.yaxis.set_major_locator(ticker.FixedLocator(range(len(labels))))
     ax.set_yticklabels(labels, rotation='horizontal')
     return bins
@@ -102,19 +102,18 @@ def plot_histo(ax, vals, bins=None, kde=False, left=None, right=None):
         ax.set_xlim(left=left, right=right)
 
 
-def plot_hmap_with_y_histo(fig, data, chunk_ranges, boxes=3, kde=False, bins=None):
+def plot_hmap_with_y_histo(fig, data, chunk_ranges, boxes=3, kde=False, **opts):
     assert len(data.shape) == 1
 
     gs = gridspec.GridSpec(1, boxes)
     ax = fig.add_subplot(gs[0, :boxes - 1])
 
-    bins = plot_heatmap(ax, data, chunk_ranges, bins=bins)
+    bins = plot_heatmap(ax, data, chunk_ranges, **opts)
 
     ax2 = fig.add_subplot(gs[0, boxes - 1])
     ax2.set_yticklabels([])
     ax2.set_xticklabels([])
     ax2.set_ylim(top=len(bins) - 1, bottom=0)
-    # seaborn.distplot(data, bins=bins, ax=ax2, kde=kde, vertical=True)
 
     bins_populations, _ = numpy.histogram(data, bins)
     ax2.barh(numpy.arange(len(bins_populations)) + 0.5, width=bins_populations)

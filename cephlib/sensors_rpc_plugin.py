@@ -14,6 +14,7 @@ import threading
 import traceback
 import subprocess
 import collections
+from distutils import spawn
 
 
 try:
@@ -22,36 +23,13 @@ except ImportError:
     libvirt = None
 
 
-try:
-    import anydbm
-except ImportError:
-    anydbm = None
+from agent_module import Pool, noraise, BIO, tostr, IS_PYTHON3, Promote  # type: ignore
 
-
-try:
-    import Pool  # type: ignore
-except ImportError:
-    pass
 
 try:
     from ceph_daemon import admin_socket
 except ImportError:
     admin_socket = None
-
-IS_PYTHON3 = (sys.version_info >= (3,))
-
-if IS_PYTHON3:
-    from io import BytesIO as BIO
-    def tostr(vl):
-        if isinstance(vl, bytes):
-            return vl.decode('utf8', errors='replace')
-        return vl
-else:
-    from StringIO import StringIO as BIO
-    def tostr(vl):
-        if isinstance(vl, unicode):
-            return vl.encode('utf8')
-        return vl
 
 
 mod_name = "sensors"
@@ -623,7 +601,6 @@ class CephSensor(ArraysSensor):
 
     historic_duration = 2
     historic_size = 200
-    use_disk = False
 
     def __init__(self, *args, **kwargs):
         ArraysSensor.__init__(self, *args, **kwargs)
@@ -634,13 +611,6 @@ class CephSensor(ArraysSensor):
         self.historic = {} if 'historic' in sources else None
         self.historic_js = {} if 'historic_js' in sources else None
         self.perf_dump = {} if 'perf_dump' in sources else None
-
-        if sources and self.use_disk:
-            fd, self.stor_fname = tempfile.mkstemp()
-            os.close(fd)
-            self.disk_stor = anydbm.open(self.stor_fname)
-        else:
-            self.disk_stor = None
 
         self.prev_historic = set()
 
@@ -658,7 +628,7 @@ class CephSensor(ArraysSensor):
                 self.prev_vals[osd_id] = self.set_osd_historic(self.historic_duration, self.historic_size, osd_id)
 
     def run_ceph_daemon_cmd(self, osd_id, args):
-        asok = "/var/run/ceph/{}-osd.{}.asok".format(self.cluster, osd_id)
+        asok = "/var/run/ceph/{0}-osd.{}.asok".format(self.cluster, osd_id)
         if admin_socket:
             res = admin_socket(asok, list(args.split()))
         else:
@@ -676,10 +646,7 @@ class CephSensor(ArraysSensor):
                 ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
                 ops_json_z = zlib.compress(ops_json)
                 if self.historic_js is not None:
-                    if self.disk_stor:
-                        self.store_to_db('historic_js', osd_id, ops_json_z)
-                    else:
-                        self.historic_js.setdefault(osd_id, []).append(ops_json_z)
+                    self.historic_js.setdefault(osd_id, []).append(ops_json_z)
 
                 curr = set()
 
@@ -694,10 +661,7 @@ class CephSensor(ArraysSensor):
 
                 data = "".join(pack_ceph_op(op_obj) for op_obj in new_ops)
                 data_z = zlib.compress(data)
-                if self.disk_stor:
-                    self.store_to_db('historic', osd_id, data_z)
-                else:
-                    self.historic.setdefault(osd_id, []).append(data_z)
+                self.historic.setdefault(osd_id, []).append(data_z)
 
                 self.prev_historic = curr
 
@@ -707,10 +671,7 @@ class CephSensor(ArraysSensor):
             if self.perf_dump is not None:
                 data = self.run_ceph_daemon_cmd(osd_id, 'perf dump')
                 data_z = zlib.compress(data)
-                if self.disk_stor:
-                    self.store_to_db('perf_dump', osd_id, data_z)
-                else:
-                    self.perf_dump.setdefault(osd_id, []).append(data_z)
+                self.perf_dump.setdefault(osd_id, []).append(data_z)
 
 
     def set_osd_historic(self, duration, keep, osd_id):
@@ -784,17 +745,17 @@ class CephSensor(ArraysSensor):
         else:
             if self.historic:
                 for osd_id, packed_ops in self.historic.items():
-                    res[("osd{}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
+                    res[("osd{0}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
                 self.historic = {}
 
             if self.historic_js:
                 for osd_id, ops in self.historic_js.items():
-                    res[("osd{}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
+                    res[("osd{0}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
                 self.historic_js = {}
 
             if self.perf_dump:
                 for osd_id, ops in self.perf_dump.items():
-                    res[("osd{}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
+                    res[("osd{0}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
                 self.perf_dump = {}
 
         return res
@@ -834,7 +795,7 @@ class SensorsData(object):
         self.stop = False
         self.sensors = {}
         self.data_fd = None  # temporary file to store results
-        self.exception = None
+        self.promoted_exc = None
 
 
 def collect(sensors_config):
@@ -852,32 +813,17 @@ def collect(sensors_config):
     return curr
 
 
-# {
-#     "pool_sz": 32,
-#     "block-io": {"allow": "sd"},
-#     "net-io": {},
-#     "perprocess-cpu": {},
-#     "perprocess-ram": {},
-#     "system-cpu": {},
-#     "system-ram": {},
-#     "ceph": {"osds": []},
-# }
-
-
-def sensors_bg_thread(sensors_config, sdata):
+def sensors_bg_thread(sensors_config, sdata, collect_tout=1.0):
     try:
         sensors_config = sensors_config.copy()
         pool_sz = sensors_config.pop("pool_sz", 32)
         pool = Pool(pool_sz) if pool_sz != 0 else None
-
-        next_collect_at = time.time()
 
         # prepare sensor classes
         with sdata.cond:
             sdata.sensors = {}
             for name, config in sensors_config.items():
                 params = {'params': config}
-                logger.debug("Start sensor %r with config %r", name, config)
 
                 if "allow" in config:
                     params["allowed_prefixes"] = config["allow"]
@@ -888,53 +834,43 @@ def sensors_bg_thread(sensors_config, sdata):
                 sdata.sensors[name] = SensorsMap[name](**params)
                 sdata.sensors[name].init()
 
-            logger.debug("sensors.config = %s", pprint.pformat(sensors_config))
-            logger.debug("Sensors map keys %s", ", ".join(sdata.sensors.keys()))
+        next_collect_at = time.time() + collect_tout
 
-        # TODO: handle exceptions here
-        # main loop
         while not sdata.stop:
             dtime = next_collect_at - time.time()
             if dtime > 0:
                 with sdata.cond:
                     sdata.cond.wait(dtime)
 
-            next_collect_at += 1.0
+            next_collect_at += collect_tout
 
             if sdata.stop:
                 break
 
             ctm = time.time()
             with sdata.cond:
-                sdata.collected_at.append(int(ctm * 1000000))
+                sdata.collected_at.append(int(ctm * 1000))
                 if pool is not None:
 
                     def caller(x):
-                        try:
-                            return x()
-                        except:
-                            logger.exception("During %r", x)
-                            raise
+                        return x()
 
-                    for ok, val in pool.map(caller, [sensor.collect for sensor in sdata.sensors.values()]):
-                        if not ok:
-                            raise val
+                    for msg, tb, exc_cls_name in pool.map(caller, [sensor.collect for sensor in sdata.sensors.values()]):
+                        if tb:
+                            sdata.promoted_exc = Promote(msg, tb, exc_cls_name)
+                            break
                 else:
                     for sensor in sdata.sensors.values():
                         sensor.collect()
 
                 etm = time.time()
-                sdata.collected_at.append(int(etm * 1000000))
+                sdata.collected_at.append(int(etm * 1000))
 
             logger.debug("Add data to collected_at - %s, %s", ctm, etm)
 
-            if etm - ctm > 0.1:
-                # TODO(koder): need to signal that something in not really ok with sensor collecting
-                pass
-
-    except Exception:
+    except Exception as exc:
         logger.exception("In sensor BG thread")
-        sdata.exception = traceback.format_exc()
+        sdata.promoted_exc = Promote(str(exc), traceback.format_exc(), type(exc).__name__)
     finally:
         for sensor in sdata.sensors.values():
             sensor.stop()
@@ -944,22 +880,37 @@ sensors_thread = None
 sdata = None  # type: SensorsData
 
 
-def rpc_start(sensors_config):
-    global sensors_thread
-    global sdata
+sensor_units = {
+    "collected_at": "ms",
 
-    if array.array('L').itemsize != 8:
-        message = "Python array.array('L') items should be 8 bytes in size, not {}." + \
-                  " Can't provide sensors on this platform. Disable sensors in config and retry"
-        raise ValueError(message.format(array.array('L').itemsize))
+    "system-cpu.idle": "",
+    "system-cpu.nice": "",
+    "system-cpu.user": "",
+    "system-cpu.sys": "",
+    "system-cpu.iowait": "",
+    "system-cpu.irq": "",
+    "system-cpu.sirq": "",
+    "system-cpu.steal": "",
+    "system-cpu.guest": "",
 
-    if sensors_thread is not None:
-        raise ValueError("Thread already running")
+    "system-cpu.procs_blocked": "",
+    "system-cpu.procs_queue_x10": "",
 
-    sdata = SensorsData()
-    sensors_thread = threading.Thread(target=sensors_bg_thread, args=(sensors_config, sdata))
-    sensors_thread.daemon = True
-    sensors_thread.start()
+    "net-io.recv_bytes": "B",
+    "net-io.recv_packets": "",
+    "net-io.send_bytes": "B",
+    "net-io.send_packets": "",
+
+    "block-io.io_queue": "",
+    "block-io.io_time": "ms",
+    "block-io.reads_completed": "",
+    "block-io.rtime": "ms",
+    "block-io.sectors_read": "B",
+    "block-io.sectors_written": "B",
+    "block-io.writes_completed": "",
+    "block-io.wtime": "ms",
+    "block-io.weighted_io_time": "ms"
+}
 
 
 def unpack_rpc_updates(res_tuple):
@@ -977,23 +928,47 @@ def unpack_rpc_updates(res_tuple):
     else:
         collected_at.fromstring(collected_at_b)
 
-    yield 'collected_at', collected_at, True
+    yield 'collected_at', collected_at, True, sensor_units['collected_at']
 
     # TODO: data is unpacked/repacked here with no reason
     for sensor_path, (offset, size, typecode) in offset_map.items():
         sensor_path = sensor_path.decode("utf8")
+        units = sensor_units.get(sensor_path, "")
         sensor_name, device, metric = sensor_path.split('.', 2)
         if sensor_name == 'ceph' and metric in {'historic', 'historic_js', 'perf_dump'}:
-            yield sensor_path, CephSensor.split_results(metric, blob[offset:offset + size]), False
+            yield sensor_path, CephSensor.split_results(metric, blob[offset:offset + size]), False, units
         else:
             sensor_data = SensorsMap[sensor_name].unpack_results(device,
                                                                  metric,
                                                                  blob[offset:offset + size],
                                                                  typecode.decode("ascii") if typecode else None)
-            yield sensor_path, sensor_data, True
+            yield sensor_path, sensor_data, True, units
 
 
+@noraise
+def rpc_start(sensors_config):
+    global sensors_thread
+    global sdata
+
+    if array.array('L').itemsize != 8:
+        message = "Python array.array('L') items should be 8 bytes in size, not {0}." + \
+                  " Can't provide sensors on this platform. Disable sensors in config and retry"
+        raise ValueError(message.format(array.array('L').itemsize))
+
+    if sensors_thread is not None:
+        raise ValueError("Thread already running")
+
+    sdata = SensorsData()
+    sensors_thread = threading.Thread(target=sensors_bg_thread, args=(sensors_config, sdata))
+    sensors_thread.daemon = True
+    sensors_thread.start()
+
+    logger.info("Sensors started with config %s", pprint.pformat(sensors_config))
+
+
+@noraise
 def rpc_get_updates():
+    t = time.time()
     if sdata is None:
         raise ValueError("No sensor thread running")
 
@@ -1001,25 +976,31 @@ def rpc_get_updates():
     blob = ""
 
     with sdata.cond:
-        if sdata.exception:
-            raise Exception(sdata.exception)
+        if sdata.promoted_exc:
+            raise sdata.promoted_exc
 
         offset_map = {}
         for sensor_name, sensor in sdata.sensors.items():
             for (device, metric), (typecode, val) in sensor.get_updates().items():
-                offset_map["{}.{}.{}".format(sensor_name, device, metric)] = (len(blob), len(val), typecode)
+                offset_map["{0}.{1}.{2}".format(sensor_name, device, metric)] = (len(blob), len(val), typecode)
                 blob += val
 
         collected_at = sdata.collected_at
         sdata.collected_at = array.array(sdata.collected_at.typecode)
 
-    logger.debug(str(collected_at))
-    return offset_map, zlib.compress(blob), zlib.compress(collected_at.tostring())
+    res = offset_map, zlib.compress(blob), zlib.compress(collected_at.tostring())
+    dt = int((time.time() - t) * 1000)
+    tlen = len(res[1]) + len(res[2]) + sum(map(len, offset_map)) + 16 * len(offset_map)
+    logger.debug("Send sensor updates. Total size is ~%sKiB. Prepare time is %sms", tlen // 1024, dt)
+    return res
 
 
+@noraise
 def rpc_stop():
     global sensors_thread
     global sdata
+
+    logger.info("Sensors stop requested")
 
     if sensors_thread is None:
         raise ValueError("No sensor thread running")
@@ -1030,8 +1011,8 @@ def rpc_stop():
 
     sensors_thread.join()
 
-    if sdata.exception:
-        raise Exception(sdata.exception)
+    if sdata.promoted_exc:
+        raise sdata.promoted_exc
 
     res = rpc_get_updates()
 
@@ -1041,8 +1022,8 @@ def rpc_stop():
     return res
 
 
+@noraise
 def rpc_find_pids_for_cmd(bname):
-    from distutils import spawn
     bin_path = spawn.find_executable(bname)
 
     if not bin_path:
@@ -1054,5 +1035,7 @@ def rpc_find_pids_for_cmd(bname):
             exe = os.path.join('/proc', name, 'exe')
             if os.path.exists(exe) and os.path.islink(exe) and bin_path == os.readlink(exe):
                 res.append(int(name))
+
+    logger.debug("Find pids for binary %s = %s", bname, res)
 
     return res
