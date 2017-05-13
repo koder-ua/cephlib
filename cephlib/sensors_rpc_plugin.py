@@ -9,7 +9,6 @@ import pprint
 import struct
 import os.path
 import logging
-import tempfile
 import threading
 import traceback
 import subprocess
@@ -866,8 +865,6 @@ def sensors_bg_thread(sensors_config, sdata, collect_tout=1.0):
                 etm = time.time()
                 sdata.collected_at.append(int(etm * 1000))
 
-            logger.debug("Add data to collected_at - %s, %s", ctm, etm)
-
     except Exception as exc:
         logger.exception("In sensor BG thread")
         sdata.promoted_exc = Promote(str(exc), traceback.format_exc(), type(exc).__name__)
@@ -933,8 +930,8 @@ def unpack_rpc_updates(res_tuple):
     # TODO: data is unpacked/repacked here with no reason
     for sensor_path, (offset, size, typecode) in offset_map.items():
         sensor_path = sensor_path.decode("utf8")
-        units = sensor_units.get(sensor_path, "")
         sensor_name, device, metric = sensor_path.split('.', 2)
+        units = sensor_units.get("{0}.{1}".format(sensor_name, metric), "")
         if sensor_name == 'ceph' and metric in {'historic', 'historic_js', 'perf_dump'}:
             yield sensor_path, CephSensor.split_results(metric, blob[offset:offset + size]), False, units
         else:

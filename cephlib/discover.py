@@ -1,31 +1,31 @@
 """ Collect data about ceph nodes"""
 import json
 import logging
+from typing import Callable, Dict, List, Tuple
 from functools import partial
-
-from .pyver import tostr
-from .common import pmap
+from concurrent.futures import ThreadPoolExecutor
 
 
 logger = logging.getLogger("cephlib")
 
 
-class OSDInfo(object):
-    def __init__(self, id, journal, storage, config):
+class OSDInfo:
+    def __init__(self, id: int, journal: str, storage: str, config: str) -> None:
         self.id = id
         self.journal = journal
         self.storage = storage
         self.config = config
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "OSDInfo({0.id!r}):\n    journal: {0.journal!r}\n    storage: {0.storage!r}".format(self)
 
 
-def get_osd_config(check_output, extra_args, osd_id):
+def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: str) -> str:
     return check_output("ceph {0} -n osd.{1} --show-config".format(extra_args, osd_id))
 
 
-def get_osds_nodes(check_output, extra_args="", thcount=1):
+def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
+                   thcount: int = 1) -> Dict[str, List[OSDInfo]]:
     """Get dict, which maps node ip to list of OSDInfo"""
 
     data = check_output("ceph {0} --format json osd dump".format(extra_args))
@@ -43,35 +43,36 @@ def get_osds_nodes(check_output, extra_args="", thcount=1):
                                "(all subsequent errors omitted)", osd_id)
                 first_error = False
         else:
-            osd_ips[osd_id] = tostr(osd_data["public_addr"]).split(":")[0]
+            osd_ips[osd_id] = osd_data["public_addr"].decode('utf8').split(":")[0]
 
     worker = partial(get_osd_config, check_output, extra_args)
     osd_ids = list(osd_ips.keys())
     first_error = True
-    for (is_ok, osd_cfg), osd_id in zip(pmap(worker, osd_ids, thcount=thcount), osd_ids):
-        if not is_ok:
-            if first_error:
-                logger.warning("Failed to get config for OSD {0}".format(osd_id))
-                first_error = False
-            continue
+    with ThreadPoolExecutor(thcount) as pool:
+        for (is_ok, osd_cfg), osd_id in zip(pool.map(worker, osd_ids), osd_ids):
+            if not is_ok:
+                if first_error:
+                    logger.warning("Failed to get config for OSD {0}".format(osd_id))
+                    first_error = False
+                continue
 
-        if osd_cfg.count("osd_journal =") != 1 or osd_cfg.count("osd_data =") != 1:
-            logger.warning("Can't detect osd.{} journal or storage path. Use default values".format(osd_id))
-            osd_data_path = "/var/lib/ceph/osd/ceph-{0}".format(osd_id)
-            osd_journal_path = "/var/lib/ceph/osd/ceph-{0}/journal".format(osd_id)
-        else:
-            osd_journal_path = osd_cfg.split("osd_journal =")[1].split("\n")[0].strip()
-            osd_data_path = osd_cfg.split("osd_data =")[1].split("\n")[0].strip()
+            if osd_cfg.count("osd_journal =") != 1 or osd_cfg.count("osd_data =") != 1:
+                logger.warning("Can't detect osd.{} journal or storage path. Use default values".format(osd_id))
+                osd_data_path = "/var/lib/ceph/osd/ceph-{0}".format(osd_id)
+                osd_journal_path = "/var/lib/ceph/osd/ceph-{0}/journal".format(osd_id)
+            else:
+                osd_journal_path = osd_cfg.split("osd_journal =")[1].split("\n")[0].strip()
+                osd_data_path = osd_cfg.split("osd_data =")[1].split("\n")[0].strip()
 
-        ip = osd_ips[osd_id]
-        osd_infos.setdefault(ip, []).append(OSDInfo(osd_id,
-                                                    journal=osd_journal_path,
-                                                    storage=osd_data_path,
-                                                    config=osd_cfg))
+            ip = osd_ips[osd_id]
+            osd_infos.setdefault(ip, []).append(OSDInfo(osd_id,
+                                                        journal=osd_journal_path,
+                                                        storage=osd_data_path,
+                                                        config=osd_cfg))
     return osd_infos
 
 
-def get_mons_nodes(check_output, extra_args=""):
+def get_mons_nodes(check_output: Callable[[str], str], extra_args: str = "") -> Dict[int, Tuple[str, str]]:
     """Return mapping mon_id => mon_ip"""
 
     data = check_output("ceph {0} --format json mon_status".format(extra_args))
@@ -82,13 +83,13 @@ def get_mons_nodes(check_output, extra_args=""):
     for mon_data in jdata["monmap"]["mons"]:
         if "addr" not in mon_data:
             if first_error:
-                mon_name = mon_data.get("name", "<MON_NAME_MISSED>")
+                mon_name = mon_data.get("name", b"<MON_NAME_MISSED>").decode('utf8')
                 logger.warning("No 'addr' field in 'ceph mon_status' output for mon %s" +
                                "(all subsequent errors omitted)", mon_name)
                 first_error = False
         else:
-            ip = tostr(mon_data["addr"]).split(":")[0]
-            ips[mon_data["rank"]] = (ip, tostr(mon_data["name"]))
+            ip = mon_data["addr"].decode('utf8').split(":")[0]
+            ips[mon_data["rank"]] = (ip, mon_data["name"].decode('utf8'))
 
     return ips
 

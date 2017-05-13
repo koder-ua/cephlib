@@ -1,9 +1,0 @@
-from typing import Dict, List, Callable, Tuple
-
-class OSDInfo(object):
-    def __init__(self, id: int, journal: str, storage: str, config: str) -> None: ...
-
-def get_osds_nodes(rpc_run: Callable[[str], str], extra_args: str = "", thcount: int = 1) -> Dict[str, List[OSDInfo]]:
-    ...
-
-def get_mons_nodes(rpc_run: Callable[[str], str], extra_args: str = "") -> Dict[int, Tuple[str, str]]: ...
