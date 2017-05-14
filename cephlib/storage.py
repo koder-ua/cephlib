@@ -5,12 +5,13 @@ This module contains interfaces for storage classes
 import os
 import re
 import json
+import array
 import shutil
 import logging
 from typing import Any, Type, IO, Tuple, cast, List, Dict, Iterable, Iterator, NamedTuple, Optional
 
-from .types import NumVector
-from .istorage import IStorable, ISimpleStorage, ISerializer, IStorage
+from .types import NumVector, DataSource
+from .istorage import IStorable, ISimpleStorage, ISerializer, IStorage, _Raise, ObjClass
 
 try:
     import yaml
@@ -165,6 +166,37 @@ else:
     YAMLSerializer = SAFEYAMLSerializer = None
 
 
+def get_arr_info(obj: Any) -> Tuple[str, List[int]]:
+    if numpy is not None:
+        if isinstance(obj, numpy.ndarray):
+            return (obj.dtype.name, list(obj.shape))
+
+    if isinstance(obj, array.array):
+        return ({'f': 'float32',
+                 'd': 'float64',
+                 'b': 'int8',
+                 'B': 'uint8',
+                 'h': 'int16',
+                 'i': 'int16',
+                 'I': 'uint16',
+                 'l': 'int32',
+                 'L': 'uint32',
+                 'q': 'int64',
+                 'Q': 'uint64',
+        }[obj.typecode], [len(obj)])
+
+    shape = []
+    while isinstance(obj, (list, tuple)):
+        shape.append(len(obj))
+        obj = obj[0]
+
+    if isinstance(obj, int):
+        return ('int64', shape)
+
+    assert isinstance(obj, float)
+    return ('float64', shape)
+
+
 class Storage(IStorage):
     """interface for storage"""
     csv_file_encoding = 'utf8'
@@ -282,7 +314,7 @@ class Storage(IStorage):
 
     # --------------  Arrays -------------------------------------------------------------------------------------------
 
-    def read_headers(self, fd) -> Tuple[str, List[str], List[str], Optional[numpy.ndarray]]:
+    def read_headers(self, fd) -> Tuple[str, List[str], List[str], Optional[NumVector]]:
         header = fd.readline().decode(self.csv_file_encoding).rstrip().split(",")
         dtype, has_header2, header2_dtype, *ext_header = header
 
@@ -329,33 +361,28 @@ class Storage(IStorage):
                   header2: NumVector = None,
                   append_on_exists: bool = False) -> None:
 
-        assert numpy is not None
-        assert isinstance(data, numpy.ndarray)
-        assert header2 is None or isinstance(header2, numpy.ndarray)
-
-        header = [data.dtype.name] + \
-                 (['false', ''] if header2 is None else ['true', header2.dtype.name]) + \
-                 header
-
+        dtype, shape = get_arr_info(data)
+        dtype2 = None if header2 is None else get_arr_info(header2)[0]
+        header = [dtype] + (['false', ''] if header2 is None else ['true', dtype2]) + header
         exists = append_on_exists and path in self.sstorage
-        vw = data.view().reshape((data.shape[0], 1)) if len(data.shape) == 1 else data
+
+        vw = data.view().reshape((data.shape[0], 1)) if (numpy and len(shape) == 1) else data
         mode = "cb" if not exists else "rb+"
 
         with self.sstorage.get_fd(path, mode) as fd:
             if exists:
                 data_dtype, _, full_header, curr_header2 = self.read_headers(fd)
 
-                assert data_dtype == data.dtype.name, \
+                assert data_dtype == dtype, \
                     "Path {!r}. Passed data type ({!r}) and current data type ({!r}) doesn't match"\
-                        .format(path, data.dtype.name, data_dtype)
+                        .format(path, dtype, data_dtype)
 
                 assert header == full_header, \
                     "Path {!r}. Passed header ({!r}) and current header ({!r}) doesn't match"\
                         .format(path, header, full_header)
 
                 assert header2 == curr_header2, \
-                    "Path {!r}. Passed header2 != current header2: {!r}\n{!r}"\
-                        .format(path, header2, curr_header2)
+                    "Path {!r}. Passed header2 != current header2: {!r}\n{!r}".format(path, header2, curr_header2)
 
                 fd.seek(0, os.SEEK_END)
                 self.cache.pop(path, None)
@@ -365,7 +392,11 @@ class Storage(IStorage):
                 if header2 is not None:
                     fd.write((",".join(map(str, header2)) + "\n").encode(self.csv_file_encoding))
 
-            numpy.savetxt(fd, vw, delimiter=',', newline="\n", fmt="%lu")
+            if numpy and isinstance(data, numpy.ndarray):
+                numpy.savetxt(fd, vw, delimiter=',', newline="\n", fmt="%lu")
+            else:
+                assert len(shape) == 1
+                fd.write(("{},\n" * len(vw)).format(*data)[:-2].encode(self.csv_file_encoding))
 
             if not exists:
                 fd.truncate()
@@ -468,3 +499,26 @@ def make_attr_storage(storage, ext, serializer=None):
 def make_storage(url, existing=False, serializer='safe'):
     fstor = FSStorage(url, existing)
     return Storage(fstor, serializer_map[serializer]())
+
+
+def append_sensor(storage: IStorage,
+                  data: NumVector,
+                  ds: DataSource,
+                  units: str,
+                  sensor_time_path: str,
+                  sensor_data_path: str,
+                  expected_arr_tag: str = 'csv') -> None:
+
+    assert ds.tag is None or ds.tag == expected_arr_tag, \
+        "Incorrect source tag == {!r}, must be {!r}".format(ds.tag, expected_arr_tag)
+
+    dtype, shape = get_arr_info(data)
+
+    if ds.metric == 'collected_at':
+        assert len(shape) == 1, "collected_at data must be 1D array"
+        path = sensor_time_path
+    else:
+        path = sensor_data_path
+
+    path = path.format_map(ds.__dict__)
+    storage.put_array(path, data, header=[units], append_on_exists=True)

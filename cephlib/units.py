@@ -23,18 +23,19 @@ RSMAP_10_hight = [(' ', 1),
                   (' E', 1000 ** 6)]
 
 SMAP_10_hight = {ext.strip().lower(): val for ext, val in RSMAP_10_hight}
+SMAP = {ext[0].lower(): val for ext, val in RSMAP}
 RSMAP_10 = [(n, float(v)) for n, v in RSMAP_10_low] + RSMAP_10_hight
 RSMAP_10_exact = dict(RSMAP_10_low + RSMAP_10_hight)
+RSMAP_all_exact = dict(RSMAP_10_low + RSMAP_10_hight + RSMAP)
 
 
 def ssize2b(ssize: Union[str, int]) -> int:
     try:
         if isinstance(ssize, int):
             return ssize
-
         ssize = ssize.lower()
-        if ssize[-1] in SMAP_10_hight:
-            return int(ssize[:-1]) * SMAP_10_hight[ssize[-1]]
+        if ssize[-1] in SMAP:
+            return int(ssize[:-1]) * SMAP[ssize[-1]]
         return int(ssize)
     except (ValueError, TypeError, AttributeError):
         raise ValueError("Unknown size format {!r}".format(ssize))
@@ -105,8 +106,8 @@ def b2ssize_10(value: Union[int, float]) -> str:
 
 
 def split_unit(units: str) -> Tuple[Union[Fraction, int], str]:
-    if len(units) > 2 and units[:2] in RSMAP_10_exact:
-        return RSMAP_10_exact[units[:2]], units[2:]
+    if len(units) > 2 and units[:2] in RSMAP_all_exact:
+        return RSMAP_all_exact[units[:2]], units[2:]
     if len(units) > 1 and units[0] in RSMAP_10_exact:
         return RSMAP_10_exact[units[0]], units[1:]
     else:

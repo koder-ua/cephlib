@@ -223,8 +223,8 @@ class ISensorStorage(metaclass=abc.ABCMeta):
     def iter_sensors(self, **ds_parts: FiltersType) -> Iterator[DataSource]:
         pass
 
-    @abc.abstractmethod
     @property
+    @abc.abstractmethod
     def storage(self) -> IStorage:
         pass
 

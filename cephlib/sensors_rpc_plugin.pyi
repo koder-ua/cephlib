@@ -1,7 +1,7 @@
-from typing import TypeVar, Callable, Any, Optional, List, Dict, Tuple
+from typing import Callable, Any, Optional, List, Dict, Tuple, NewType
 
-Pid = TypeVar('Pid', str)
-AnyFunc = TypeVar('AnyFunc', Callable[..., Any])
+Pid = NewType('Pid', str)
+AnyFunc = Callable[..., Any]
 PrefixList = Optional[List[str]]
 SensorDict = Dict[str, int]
 

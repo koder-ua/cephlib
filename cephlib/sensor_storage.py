@@ -4,9 +4,10 @@ from typing import Dict, Tuple, Any, Iterator, Optional
 import numpy
 
 from .units import unit_conversion_coef
-from .numeric_types import ArrayData, DataSource, TimeSeries, DataStorageTagsDct, ndarray1d
-from .storage import Storage
-from .istorage import ISensorStorage
+from .types import NumVector, DataSource, DataStorageTagsDct
+from .numeric_types import ArrayData, TimeSeries
+from .istorage import ISensorStorage, IStorage
+from .storage import append_sensor
 
 
 def partial_format(path: str, params: Dict[str, Optional[str]]) -> str:
@@ -20,10 +21,14 @@ class SensorStorageBase(ISensorStorage):
     ts_arr_tag = 'csv'
     csv_file_encoding = 'utf8'
 
-    def __init__(self, storage: Storage, db_paths: Any) -> None:
-        self.storage = storage
+    def __init__(self, storage: IStorage, db_paths: Any) -> None:
+        self._storage = storage
         self.cache = {}  # type: Dict[str, Tuple[int, int, ArrayData]]
         self.db_paths = db_paths
+
+    @property
+    def storage(self) -> IStorage:
+        return self._storage
 
     def sync(self) -> None:
         self.storage.sync()
@@ -58,18 +63,11 @@ class SensorStorageBase(ISensorStorage):
 
         return TimeSeries(data[slc], times=collected_at[slc], source=ds, units=data_units, time_units=time_units)
 
-    def append_sensor(self, data: ndarray1d, ds: DataSource, units: str) -> None:
-        assert ds.tag is None or ds.tag == self.ts_arr_tag, \
-            "Incorrect source tag == {!r}, must be {!r}".format(ds.tag, self.ts_arr_tag)
-
-        if ds.metric == 'collected_at':
-            path = self.db_paths.sensor_time
-            assert len(data.shape) == 1, "collected_at data must be 1D array"
-        else:
-            path = self.db_paths.sensor_data
-
-        path = path.format_map(ds.__dict__)
-        self.storage.put_array(path, data, header=[units], append_on_exists=True)
+    def append_sensor(self, data: NumVector, ds: DataSource, units: str) -> None:
+        append_sensor(self.storage, data, ds, units,
+                      sensor_time_path=self.db_paths.sensor_time,
+                      sensor_data_path=self.db_paths.sensor_data,
+                      expected_arr_tag=self.ts_arr_tag)
 
     # -------------   ITER OVER STORAGE   ------------------------------------------------------------------------------
 
@@ -87,11 +85,12 @@ class SensorStorageBase(ISensorStorage):
     def iter_objs(self, path_templ, **ds_parts) -> Iterator[DataSource]:
         if ds_parts:
             keys, raw_vals = zip(*ds_parts.items())
-            vals = [[val] if isinstance(val, str) else val for val in raw_vals]
+            vals = [([val] if isinstance(val, str) else val) for val in raw_vals]
             for combination in itertools.product(*vals):
-                path = partial_format(path_templ, dict(zip(keys, combination)))
+                comb_dict = dict(zip(keys, combination))
+                path = partial_format(path_templ, comb_dict)
                 for ds in self.iter_objs(path):
-                    yield ds(**ds_parts)
+                    yield ds(**comb_dict)
         else:
             for is_node, path, path_chunks in self.iter_paths(path_templ):
                 assert is_node

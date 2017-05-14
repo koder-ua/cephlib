@@ -1,5 +1,5 @@
-from typing import List, Iterable, Dict, Any
-from .numeric_types import TimeSeries
+from typing import List, Dict, Any
+from .node import NodeInfo
 
 
 from .istorage import IStorage
@@ -35,9 +35,15 @@ class WallyDB:
     sensor_time = sensor_time_r.replace("\\.", '.')
     plot = plot_r.replace("\\.", '.')
 
+    all_nodes = 'nodes/all.yml'
+    nodes_params = 'nodes/params.js'
+    rpc_logs = "rpc_logs/{node_id}.txt"
+    hw_info = "nodes/hw_{node_id}.yml"
+    sw_info = "nodes/sw_{node_id}.yml"
+
 
 def find_nodes_by_roles(storage: IStorage, roles: List[str]) -> List[str]:
-    nodes = storage.get('all_nodes')  # type: List[Dict[str, Any]]
+    nodes = storage.load_list(NodeInfo, WallyDB.all_nodes)
     roles_s = set(roles)
-    return [node['node_id'] for node in nodes if roles_s.intersection(node['roles'])]
+    return [node.node_id for node in nodes if roles_s.intersection(node.roles)]
 

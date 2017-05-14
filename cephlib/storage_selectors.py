@@ -60,7 +60,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
     uint64_p = ctypes.POINTER(ctypes.c_uint64)
 
     if c_interp_func_agg is None:
-        dirname = os.path.dirname(os.path.dirname(cephlib.__file__))
+        dirname = os.path.dirname(cephlib.__file__)
         path = os.path.join(dirname, 'clib', 'libwally.so')
         cdll = ctypes.CDLL(path)
 
@@ -179,8 +179,7 @@ def iter_interpolated_sensors(sstorage: ISensorStorage, time_range: Tuple[int, i
 
 def summ_sensors(sstorage: ISensorStorage, time_range: Tuple[int, int], **filters: FiltersType) -> Optional[TimeSeries]:
 
-    key = dict(time_range=time_range,
-               stor_id=id(sstorage))
+    key = dict(time_range=time_range, stor_id=id(sstorage))
     for name, val in filters.items():
         key[name] = val if isinstance(val, str) else tuple(val)
 
