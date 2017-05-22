@@ -1,9 +1,10 @@
 import copy
-from typing import Optional, cast, List, NamedTuple
+from typing import Optional, cast, List, NamedTuple, Tuple
 
 import numpy
 
 from .types import DataSource
+from .units import unit_conversion_coef_f
 
 ndarray1d = numpy.ndarray
 ndarray2d = numpy.ndarray
@@ -27,6 +28,18 @@ class TimeSeries:
 
         self.source = source
         self.histo_bins = histo_bins
+        self.sec2ts_coef = unit_conversion_coef_f('s', self.time_units)
+        assert len(self.data) == len(self.times)
+
+    def select(self, trange: Tuple[float, float]) -> 'TimeSeries':
+        selected = copy.copy(self)
+        idx1, idx2 = numpy.searchsorted(self.times, (trange[0] * self.sec2ts_coef, trange[1] * self.sec2ts_coef))
+        idx2 += 1
+        idx1 = max(0, idx1 - 1)
+        selected.data = self.data[idx1: idx2]
+        selected.times = self.times[idx1: idx2]
+        assert len(selected.data) == len(selected.times)
+        return selected
 
     def __str__(self) -> str:
         return "TS(src={}, time_size={}, dshape={}):\n".format(self.source, len(self.times), *self.data.shape)

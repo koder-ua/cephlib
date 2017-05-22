@@ -22,7 +22,10 @@ except ImportError:
     libvirt = None
 
 
-from agent_module import Pool, noraise, BIO, tostr, IS_PYTHON3, Promote  # type: ignore
+try:
+    from agent_module import Pool, noraise, BIO, tostr, IS_PYTHON3, Promote  # type: ignore
+except ImportError:
+    noraise = lambda x: x
 
 
 try:
@@ -37,6 +40,7 @@ __version__ = (0, 1)
 
 logger = logging.getLogger("agent.sensors")
 SensorsMap = {}
+SENSOR2DEV_TYPE = {}
 
 
 class Sensor(object):
@@ -81,7 +85,12 @@ class ArraysSensor(Sensor):
         key = (device, name)
         pval = self.prev_vals.get(key)
         if pval is not None:
-            self.data[key].append(value - pval)
+            if (value - pval) < 0:
+                logger.error("Failed data in ArraysSensor.add_relative::%s. pval(=%s)>value(=%s). %s::%s",
+                             self.__class__.__name__, pval, value, device, name)
+                self.data[key].append(0)
+            else:
+                self.data[key].append(value - pval)
         self.prev_vals[key] = value
 
     def get_updates(self):
@@ -113,9 +122,11 @@ class ArraysSensor(Sensor):
 time_array_typechar = ArraysSensor.typecode
 
 
-def provides(name):
+def provides(name, dev_tp=None):
     def closure(cls):
         SensorsMap[name] = cls
+        if dev_tp is not None:
+            SENSOR2DEV_TYPE[name] = dev_tp
         return cls
     return closure
 
@@ -154,7 +165,7 @@ def get_pid_name(pid):
         return "no_such_process"
 
 
-@provides("block-io")
+@provides("block-io", 'block')
 class BlockIOSensor(ArraysSensor):
     #  1 - major number
     #  2 - minor mumber
@@ -228,7 +239,7 @@ class BlockIOSensor(ArraysSensor):
                     self.add_data(dev_name, name, int(vals[pos]))
 
 
-@provides("vm-io")
+@provides("vm-io", 'block')
 class VMIOSensor(ArraysSensor):
     def __init__(self, *args, **kwargs):
         ArraysSensor.__init__(self, *args, **kwargs)
@@ -280,7 +291,7 @@ def get_interfaces():
         yield '/devices/virtual/' not in fpath, name
 
 
-@provides("net-io")
+@provides("net-io", 'eth')
 class NetIOSensor(ArraysSensor):
     net_values_pos = [
         (0, 'recv_bytes', True),
@@ -400,7 +411,7 @@ class ProcRamSensor(ArraysSensor):
                 continue
 
 
-@provides("system-cpu")
+@provides("system-cpu", 'cpu')
 class SystemCPUSensor(ArraysSensor):
     # 0 - cpu name
     # 1 - user: normal processes executing in user mode

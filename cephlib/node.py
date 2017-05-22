@@ -19,14 +19,125 @@ OSRelease = NamedTuple("OSRelease",
                         ("arch", str)])
 
 
+class NodeRole:
+    storage = 'storage'
+    osd = 'ceph-osd'
+    compute = 'compute'
+    client = 'testnode'
+    testnode = 'testnode'
+    mon = 'ceph-mon'
+
+
+class HWInfo(Storable):
+    __ignore_fields__ = ['raw_xml']
+
+    def __init__(self) -> None:
+        self.lshw_hostname = None  # type: str
+        self.cpus = []  # type: List[Tuple[str, int]]
+
+        # /dev/... devices
+        self.disks_info = {}  # type: Dict[str, int]
+
+        # real disks on raid controller
+        self.disks_raw_info = {}  # type: Dict[str, str]
+
+        # name => (speed, is_full_diplex, ip_addresses)
+        self.net_info = {}  # type: Dict[str, Tuple[Optional[int], Optional[bool], List[str]]]
+
+        self.ram_size = 0  # type: int
+        self.sys_name = None  # type: str
+        self.mb = None  # type: str
+        self.raw_xml = None  # type: Optional[str]
+
+        self.storage_controllers = []  # type: List[str]
+
+    def get_summary(self) -> Dict[str, int]:
+        cores = sum(count for _, count in self.cores)
+        disks_size_mb = sum(size for _, size in self.disks_info.values())
+
+        return {'cores': cores,
+                'ram': self.ram_size,
+                'storage': disks_size_mb,
+                'disk_count': len(self.disks_info)}
+
+    def __str__(self):
+        res = []
+
+        summ = self.get_summary()
+        summary = "Simmary: {cores} cores, {ram}B RAM, {disk}B storage"
+        res.append(summary.format(cores=summ['cores'],
+                                  ram=b2ssize(summ['ram']),
+                                  disk=b2ssize(summ['storage'])))
+        res.append(str(self.sys_name))
+        if self.mb:
+            res.append("Motherboard: " + self.mb)
+
+        if not self.ram_size:
+            res.append("RAM: Failed to get RAM size")
+        else:
+            res.append("RAM " + b2ssize(self.ram_size) + "B")
+
+        if not self.cores:
+            res.append("CPU cores: Failed to get CPU info")
+        else:
+            res.append("CPU cores:")
+            for name, count in self.cpus:
+                if count > 1:
+                    res.append("    {0} * {1}".format(count, name))
+                else:
+                    res.append("    " + name)
+
+        if self.storage_controllers:
+            res.append("Disk controllers:")
+            for descr in self.storage_controllers:
+                res.append("    " + descr)
+
+        if self.disks_info:
+            res.append("Storage devices:")
+            for dev, (model, size) in sorted(self.disks_info.items()):
+                ssize = b2ssize(size) + "MiB"
+                res.append("    {0} {1} {2}".format(dev, ssize, model))
+        else:
+            res.append("Storage devices's: Failed to get info")
+
+        if self.disks_raw_info:
+            res.append("Disks devices:")
+            for dev, descr in sorted(self.disks_raw_info.items()):
+                res.append("    {0} {1}".format(dev, descr))
+        else:
+            res.append("Disks devices's: Failed to get info")
+
+        if self.net_info:
+            res.append("Net adapters:")
+            for name, (speed, dtype, _) in self.net_info.items():
+                res.append("    {0} {2} duplex={1}".format(name, dtype, speed))
+        else:
+            res.append("Net adapters: Failed to get net info")
+
+        return str(self.lshw_hostname) + ":\n" + "\n".join("    " + i for i in res)
+
+
+class SWInfo(Storable):
+    def __init__(self) -> None:
+        self.mtab = {}  # type: Dict[str, str]
+        self.kernel_version = None  # type: str
+        self.libvirt_version = None  # type: Optional[str]
+        self.qemu_version = None  # type: Optional[str]
+        self.os_version = None  # type: Tuple[str, ...]
+
+
 class NodeInfo(IStorable):
     """Node information object, result of discovery process or config parsing"""
-    def __init__(self, ssh_creds: ConnCreds, roles: Set[str], params: Dict[str, Any] = None) -> None:
+    def __init__(self, ssh_creds: ConnCreds, roles: Set[str], params: Dict[str, Any] = None,
+                 hostname: str = None) -> None:
         # ssh credentials
         self.ssh_creds = ssh_creds
         self.roles = roles
+        self.hostname = hostname
         self.os_vm_id = None  # type: Optional[int]
         self.params = {}  # type: Dict[str, Any]
+        self.hw_info = None  # type: Optional[HWInfo]
+        self.sw_info = None  # type: Optional[SWInfo]
         if params is not None:
             self.params = params
 
@@ -44,6 +155,8 @@ class NodeInfo(IStorable):
         dct = self.__dict__.copy()
         dct['ssh_creds'] = self.ssh_creds.raw()
         dct['roles'] = list(self.roles)
+        dct['hw_info'] = self.hw_info.raw() if self.hw_info is not None else None
+        dct['sw_info'] = self.sw_info.raw() if self.sw_info is not None else None
         return dct
 
     @classmethod
@@ -51,6 +164,8 @@ class NodeInfo(IStorable):
         data = data.copy()
         data['ssh_creds'] = ConnCreds.fromraw(data['ssh_creds'])
         data['roles'] = set(data['roles'])
+        data['hw_info'] = None if data.get('hw_info') is None else HWInfo.fromraw(data['hw_info'])
+        data['sw_info'] = None if data.get('sw_info') is None else SWInfo.fromraw(data['sw_info'])
         obj = cls.__new__(cls)  # type: ignore
         obj.__dict__.update(data)
         return obj
@@ -139,6 +254,10 @@ class IRPCNode(metaclass=abc.ABCMeta):
         return False
 
 
+def get_hostname(node: IRPCNode) -> str:
+    return node.run("hostname", nolog=True).strip()
+
+
 def log_nodes_statistic(nodes: Sequence[IRPCNode]) -> None:
     logger.info("Found {0} nodes total".format(len(nodes)))
 
@@ -186,110 +305,16 @@ def get_data(rr: str, data: str) -> str:
     return match_res.group(0)
 
 
-class HWInfo(Storable):
-    __ignore_fields__ = ['raw_xml']
-
-    def __init__(self) -> None:
-        self.hostname = None  # type: str
-        self.cores = []  # type: List[Tuple[str, int]]
-
-        # /dev/... devices
-        self.disks_info = {}  # type: Dict[str, Tuple[str, int]]
-
-        # real disks on raid controller
-        self.disks_raw_info = {}  # type: Dict[str, str]
-
-        # name => (speed, is_full_diplex, ip_addresses)
-        self.net_info = {}  # type: Dict[str, Tuple[Optional[int], Optional[bool], List[str]]]
-
-        self.ram_size = 0  # type: int
-        self.sys_name = None  # type: str
-        self.mb = None  # type: str
-        self.raw_xml = None  # type: Optional[str]
-
-        self.storage_controllers = []  # type: List[str]
-
-    def get_summary(self) -> Dict[str, int]:
-        cores = sum(count for _, count in self.cores)
-        disks = sum(size for _, size in self.disks_info.values())
-
-        return {'cores': cores,
-                'ram': self.ram_size,
-                'storage': disks,
-                'disk_count': len(self.disks_info)}
-
-    def __str__(self):
-        res = []
-
-        summ = self.get_summary()
-        summary = "Simmary: {cores} cores, {ram}B RAM, {disk}B storage"
-        res.append(summary.format(cores=summ['cores'],
-                                  ram=b2ssize(summ['ram']),
-                                  disk=b2ssize(summ['storage'])))
-        res.append(str(self.sys_name))
-        if self.mb:
-            res.append("Motherboard: " + self.mb)
-
-        if not self.ram_size:
-            res.append("RAM: Failed to get RAM size")
-        else:
-            res.append("RAM " + b2ssize(self.ram_size) + "B")
-
-        if not self.cores:
-            res.append("CPU cores: Failed to get CPU info")
-        else:
-            res.append("CPU cores:")
-            for name, count in self.cores:
-                if count > 1:
-                    res.append("    {0} * {1}".format(count, name))
-                else:
-                    res.append("    " + name)
-
-        if self.storage_controllers:
-            res.append("Disk controllers:")
-            for descr in self.storage_controllers:
-                res.append("    " + descr)
-
-        if self.disks_info:
-            res.append("Storage devices:")
-            for dev, (model, size) in sorted(self.disks_info.items()):
-                ssize = b2ssize(size) + "B"
-                res.append("    {0} {1} {2}".format(dev, ssize, model))
-        else:
-            res.append("Storage devices's: Failed to get info")
-
-        if self.disks_raw_info:
-            res.append("Disks devices:")
-            for dev, descr in sorted(self.disks_raw_info.items()):
-                res.append("    {0} {1}".format(dev, descr))
-        else:
-            res.append("Disks devices's: Failed to get info")
-
-        if self.net_info:
-            res.append("Net adapters:")
-            for name, (speed, dtype, _) in self.net_info.items():
-                res.append("    {0} {2} duplex={1}".format(name, dtype, speed))
-        else:
-            res.append("Net adapters: Failed to get net info")
-
-        return str(self.hostname) + ":\n" + "\n".join("    " + i for i in res)
-
-
-class SWInfo(Storable):
-    def __init__(self) -> None:
-        self.mtab = None  # type: str
-        self.kernel_version = None  # type: str
-        self.libvirt_version = None  # type: Optional[str]
-        self.qemu_version = None  # type: Optional[str]
-        self.os_version = None  # type: Tuple[str, ...]
-
-
 def get_sw_info(node: IRPCNode) -> SWInfo:
     res = SWInfo()
 
     res.os_version = tuple(get_os(node))
     res.kernel_version = node.get_file_content('/proc/version').decode('utf8').strip()
-    res.mtab = node.get_file_content('/etc/mtab').decode('utf8').strip()
+    for line in node.get_file_content('/etc/mtab').decode('utf8').split("\n"):
+        line = line.strip()
+        if line.startswith('/dev/'):
+            dev, rest = line.split(" ", 1)
+            res.mtab[dev] = rest
 
     try:
         res.libvirt_version = node.run("virsh -v", nolog=True).strip()
@@ -318,7 +343,7 @@ def get_hw_info(node: IRPCNode) -> Optional[HWInfo]:
     lshw_et = ET.fromstring(lshw_out)
 
     try:
-        res.hostname = cast(str, lshw_et.find("node").attrib['id'])
+        res.lshw_hostname = cast(str, lshw_et.find("node").attrib['id'])
     except Exception:
         pass
 
@@ -349,7 +374,7 @@ def get_hw_info(node: IRPCNode) -> Optional[HWInfo]:
                 threads = 1
             else:
                 threads = int(threads_node.attrib['value'])
-            res.cores.append((model, threads))
+            res.cpus.append((model, threads))
         except Exception:
             pass
 
@@ -422,8 +447,8 @@ def get_hw_info(node: IRPCNode) -> Optional[HWInfo]:
 
                 sz_node = disk.find('size')
                 assert sz_node.attrib['units'] == 'bytes'
-                sz = int(sz_node.text)
-                res.disks_info[dev] = ('', sz)
+                sz = int(sz_node.text) // 1024 ** 2
+                res.disks_info[dev] = sz
             else:
                 description = disk.find('description').text
                 product = disk.find('product').text

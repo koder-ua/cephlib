@@ -161,7 +161,7 @@ def do_plot_hmap_with_histo(fig: Figure,
     ax2.set_ylim(top=len(bins_populations), bottom=0)
     bins_populations_perc = bins_populations * 100 / bins_populations.sum()
     ax2.barh(numpy.arange(len(bins_populations_perc)) + 0.5, width=bins_populations_perc)
-    ax2.xaxis.set_major_formatter(FuncFormatter(lambda v, pos: "{0}%".format(int(v))))
+    ax2.xaxis.set_major_formatter(FuncFormatter(lambda v, pos: float2str(v, digits=2)))
 
     if isinstance(histo_grid, str):
         ax2.grid(axis=histo_grid)
@@ -215,7 +215,6 @@ def provide_plot(noaxis: bool = False,
                 with matplotlib.style.context(mlstyle):
                     file_format = path.tag.split(".")[-1]
                     fig = plt.figure(figsize=style.figsize_long if long_plot else style.figsize)
-
                     if not noaxis:
                         xlabel = kwargs.pop('xlabel', None)
                         ylabel = kwargs.pop('ylabel', None)
@@ -228,7 +227,10 @@ def provide_plot(noaxis: bool = False,
                             ax.set_ylabel(ylabel)
 
                         if grid:
-                            ax.grid(axis=grid)
+                            if grid is True:
+                                ax.grid(True)
+                            else:
+                                ax.grid(axis=grid)
                     else:
                         ax = None
 
@@ -338,6 +340,14 @@ def plot_simple_bars(pp: PlotParams,
     pp.fig.subplots_adjust(left=0.2)
 
 
+@provide_plot(no_legend=True, grid=True)
+def plot_dots_with_regression(pp: PlotParams, x: array1d, y: array1d,
+                              x_approx: array1d = None, y_approx: array1d = None) -> None:
+    pp.ax.plot(x, y, '.')
+    if x_approx is not None:
+        pp.ax.plot(x_approx, y_approx, '--')
+
+
 @provide_plot(no_legend=True, long_plot=True, noaxis=True)
 def plot_hmap_from_2d(pp: PlotParams, data2d: numpy.ndarray, xlabel: str, ylabel: str,
                       bins: numpy.ndarray = None) -> None:
@@ -358,28 +368,65 @@ def plot_hmap_from_2d(pp: PlotParams, data2d: numpy.ndarray, xlabel: str, ylabel
 @provide_plot(eng=True, grid='y')
 def plot_v_over_time(pp: PlotParams, units: str, ts: TimeSeries,
                      plot_avg_dev: bool = True, plot_points: bool = True) -> None:
-
-    min_time = min(ts.times)
-
     # convert time to ms
-    coef = unit_conversion_coef_f(ts.time_units, 's')
-    time_points = numpy.array([(val_time - min_time) * coef for val_time in ts.times])
+    if len(ts.times) != len(ts.data):
+        import IPython
+        IPython.embed()
+    assert ts.times.min() == ts.times[0]
+    assert len(ts.times) == len(ts.data)
 
+    time_points = (ts.times - ts.times[0]) * unit_conversion_coef_f(ts.time_units, 's')
     outliers_idxs = find_ouliers_ts(ts.data, cut_range=pp.style.outliers_q_nd)
     outliers_4q_idxs = find_ouliers_ts(ts.data, cut_range=pp.style.outliers_hide_q_nd)
     normal_idxs = numpy.logical_not(outliers_idxs)
-    outliers_idxs = outliers_idxs & numpy.logical_not(outliers_4q_idxs)
-    # hidden_outliers_count = numpy.count_nonzero(outliers_4q_idxs)
+
+    outl_4q_count = numpy.count_nonzero(outliers_4q_idxs)
+    if outl_4q_count != 0 and outl_4q_count < pp.style.max_hidden_outliers_fraction * len(ts.data):
+        outliers_idxs = outliers_idxs & numpy.logical_not(outliers_4q_idxs)
+    else:
+        outliers_4q_idxs = None
 
     data = ts.data[normal_idxs]
     data_times = time_points[normal_idxs]
-    outliers = ts.data[outliers_idxs]
-    outliers_times = time_points[outliers_idxs]
 
     if plot_points:
+        outliers = ts.data[outliers_idxs]
+        outliers_times = time_points[outliers_idxs]
+
         alpha = pp.colors.noise_alpha if plot_avg_dev else 1.0
         pp.ax.plot(data_times, data, pp.style.point_shape, color=pp.colors.primary_color, alpha=alpha, label="Data")
-        pp.ax.plot(outliers_times, outliers, pp.style.err_point_shape, color=pp.colors.err_color, label="Outliers")
+
+        if len(outliers) > 0:
+            if outliers_4q_idxs:
+                label = "{}Q < Outliers < {}Q".format(pp.style.outliers_q_nd, pp.style.outliers_hide_q_nd)
+            else:
+                label = "{}Q+ Outliers".format(pp.style.outliers_q_nd)
+            pp.ax.plot(outliers_times, outliers, pp.style.err_point_shape, color=pp.colors.err_color, label=label)
+
+        if outliers_4q_idxs is not None:
+            hidden_outliers = ts.data[outliers_4q_idxs]
+            hidden_outliers_times = time_points[outliers_4q_idxs]
+
+            med = numpy.median(data)
+
+            if len(outliers) > 0:
+                max_val = max(data.max(), outliers.max())
+                min_val = min(data.min(), outliers.min())
+            else:
+                max_val = data.max()
+                min_val = data.min()
+
+            hidden_outliers_times_hight = hidden_outliers_times[hidden_outliers > med]
+            if len(hidden_outliers_times_hight) > 0:
+                pp.ax.plot(hidden_outliers_times_hight, [max_val] * len(hidden_outliers_times_hight),
+                           pp.style.super_outlier_point_shape_up, color=pp.colors.super_outlier_color,
+                           label="{}Q+ hight Outliers".format(pp.style.outliers_hide_q_nd))
+
+            hidden_outliers_times_low = hidden_outliers_times[hidden_outliers < med]
+            if len(hidden_outliers_times_low) > 0:
+                pp.ax.plot(hidden_outliers_times_low, [min_val] * len(hidden_outliers_times_low),
+                           pp.style.super_outlier_point_shape_down, color=pp.colors.super_outlier_color,
+                           label="{}Q+ low Outliers".format(pp.style.outliers_hide_q_nd))
 
     has_negative_dev = False
     plus_minus = "\xb1"

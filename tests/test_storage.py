@@ -12,11 +12,12 @@ except ImportError:
 import pytest
 
 
-from cephlib.storage import make_storage, IStorable, FSStorage, make_attr_storage
-from cephlib.hlstorage import HLStorageBase
-from cephlib.types2 import TimeSeries, DataSource
-from cephlib.storage_structures import WallyDB
-
+from cephlib.istorage import IStorable
+from cephlib.storage import make_storage, FSStorage, make_attr_storage
+from cephlib.numeric_types import TimeSeries
+from cephlib.types import DataSource
+from cephlib.wally_storage import WallyDB
+from cephlib.sensor_storage import SensorStorage
 
 @contextlib.contextmanager
 def in_temp_dir():
@@ -228,131 +229,131 @@ def test_substorage():
             assert storage.sub_storage("x").get("y") == "data"
 
 
-# noinspection PyStatementEffect
-def test_hlstorage_ts():
-    with in_temp_dir() as root:
-        with make_storage(root, existing=False) as storage:
-            hlstorage = HLStorageBase(storage, WallyDB)
-
-            ds = DataSource(suite_id='suite_1',
-                            job_id='job_11',
-                            node_id="node1",
-                            sensor='io_sensor',
-                            metric='io',
-                            tag='csv')
-
-            with pytest.raises(AssertionError):
-                ds.verify()
-
-            ds = DataSource(suite_id='suite_1',
-                            job_id='job_11',
-                            node_id="1.1.2.3:23",
-                            sensor='sensor',
-                            metric='io',
-                            tag='csv')
-            ds.verify()
-
-            data = numpy.arange(100, dtype='uint64')
-            data.shape = [10, 10]
-            ts = TimeSeries(data,
-                            times=numpy.arange(10, 20, dtype='uint64'),
-                            units='x',
-                            time_units='s',
-                            source=ds,
-                            histo_bins=None)
-
-            # should allows non-lat 2d ts
-            hlstorage.put_ts(ts)
-
-            assert ts == hlstorage.get_ts(ts.source)
-
-            ts.data = numpy.arange(10, dtype='uint64')
-            hlstorage.put_ts(ts)
-            assert ts == hlstorage.get_ts(ds)
-
-            ts_ds = list(hlstorage.iter_ts())
-            assert len(ts_ds) == 1
-            assert ts_ds[0] == ds
-
-            ts_ds = list(hlstorage.iter_ts(suite_id=ds.suite_id))
-            assert len(ts_ds) == 1
-            assert ts_ds[0] == ds
-
-            ts_ds = list(hlstorage.iter_ts(job_id=ds.job_id))
-            assert len(ts_ds) == 1
-            assert ts_ds[0] == ds
-
-            ts_ds = list(hlstorage.iter_ts(suite_id=ds.suite_id, job_id=ds.job_id))
-            assert len(ts_ds) == 1
-            assert ts_ds[0] == ds
-
-            assert ts == hlstorage.get_ts(ts.source)
-
-            ts2 = TimeSeries(numpy.arange(20, dtype='uint64'),
-                             times=numpy.arange(30, 50, dtype='uint64'),
-                             units='Kx',
-                             time_units='us',
-                             source=ds,
-                             histo_bins=None)
-
-            assert ts2 != ts
-            assert ts2.source == ts.source
-
-            hlstorage.put_ts(ts2)
-            assert ts2 == hlstorage.get_ts(ts2.source)
-            assert ts2 == hlstorage.get_ts(ts.source)
-
-            ts.source = ts.source(node_id='3.3.3.3:333')
-            assert ts2.source != ts.source
-            hlstorage.put_ts(ts)
-
-            assert ts2 == hlstorage.get_ts(ts2.source)
-            assert ts == hlstorage.get_ts(ts.source)
-
-
-# noinspection PyStatementEffect
-def test_hlstorage_hist():
-    with in_temp_dir() as root:
-        with make_storage(root, existing=False) as storage:
-            hlstorage = HLStorageBase(storage, WallyDB)
-            ds = DataSource(suite_id='suite_1',
-                            job_id='job_11',
-                            node_id="1.1.2.3:23",
-                            sensor='sensor',
-                            metric='lat',
-                            tag='csv')
-            ds.verify()
-
-            histo_bins = numpy.arange(1024, 1034)
-            data = numpy.arange(10 * 10, dtype='uint64')
-            data.shape = [10, 10]
-
-            ts = TimeSeries(data,
-                            times=numpy.arange(10, 20, dtype='uint64'),
-                            units='x',
-                            time_units='s',
-                            source=ds,
-                            histo_bins=None)
-
-            with pytest.raises(AssertionError):
-                hlstorage.put_ts(ts)
-
-            ts.histo_bins = histo_bins
-            hlstorage.put_ts(ts)
-            assert ts == hlstorage.get_ts(ds)
-
-            ts_ds = list(hlstorage.iter_ts())
-            assert len(ts_ds) == 1
-            assert ts_ds[0] == ds
-
-            assert ts == hlstorage.get_ts(ts.source)
+# # noinspection PyStatementEffect
+# def test_hlstorage_ts():
+#     with in_temp_dir() as root:
+#         with make_storage(root, existing=False) as storage:
+#             sstorage = SensorStorage(storage, WallyDB)
+#
+#             ds = DataSource(suite_id='suite_1',
+#                             job_id='job_11',
+#                             node_id="node1",
+#                             sensor='io_sensor',
+#                             metric='io',
+#                             tag='csv')
+#
+#             with pytest.raises(AssertionError):
+#                 ds.verify()
+#
+#             ds = DataSource(suite_id='suite_1',
+#                             job_id='job_11',
+#                             node_id="1.1.2.3:23",
+#                             sensor='sensor',
+#                             metric='io',
+#                             tag='csv')
+#             ds.verify()
+#
+#             data = numpy.arange(100, dtype='uint64')
+#             data.shape = [10, 10]
+#             ts = TimeSeries(data,
+#                             times=numpy.arange(10, 20, dtype='uint64'),
+#                             units='x',
+#                             time_units='s',
+#                             source=ds,
+#                             histo_bins=None)
+#
+#             # should allows non-lat 2d ts
+#             sstorage.append_sensor(ts.data, ts.source, ts.units)
+#
+#             assert ts == sstorage.get_sensor(ts.source)
+#
+#             ts.data = numpy.arange(10, dtype='uint64')
+#             hlstorage.put_ts(ts)
+#             assert ts == hlstorage.get_ts(ds)
+#
+#             ts_ds = list(hlstorage.iter_ts())
+#             assert len(ts_ds) == 1
+#             assert ts_ds[0] == ds
+#
+#             ts_ds = list(hlstorage.iter_ts(suite_id=ds.suite_id))
+#             assert len(ts_ds) == 1
+#             assert ts_ds[0] == ds
+#
+#             ts_ds = list(hlstorage.iter_ts(job_id=ds.job_id))
+#             assert len(ts_ds) == 1
+#             assert ts_ds[0] == ds
+#
+#             ts_ds = list(hlstorage.iter_ts(suite_id=ds.suite_id, job_id=ds.job_id))
+#             assert len(ts_ds) == 1
+#             assert ts_ds[0] == ds
+#
+#             assert ts == hlstorage.get_ts(ts.source)
+#
+#             ts2 = TimeSeries(numpy.arange(20, dtype='uint64'),
+#                              times=numpy.arange(30, 50, dtype='uint64'),
+#                              units='Kx',
+#                              time_units='us',
+#                              source=ds,
+#                              histo_bins=None)
+#
+#             assert ts2 != ts
+#             assert ts2.source == ts.source
+#
+#             hlstorage.put_ts(ts2)
+#             assert ts2 == hlstorage.get_ts(ts2.source)
+#             assert ts2 == hlstorage.get_ts(ts.source)
+#
+#             ts.source = ts.source(node_id='3.3.3.3:333')
+#             assert ts2.source != ts.source
+#             hlstorage.put_ts(ts)
+#
+#             assert ts2 == hlstorage.get_ts(ts2.source)
+#             assert ts == hlstorage.get_ts(ts.source)
+#
+#
+# # noinspection PyStatementEffect
+# def test_hlstorage_hist():
+#     with in_temp_dir() as root:
+#         with make_storage(root, existing=False) as storage:
+#             hlstorage = HLStorageBase(storage, WallyDB)
+#             ds = DataSource(suite_id='suite_1',
+#                             job_id='job_11',
+#                             node_id="1.1.2.3:23",
+#                             sensor='sensor',
+#                             metric='lat',
+#                             tag='csv')
+#             ds.verify()
+#
+#             histo_bins = numpy.arange(1024, 1034)
+#             data = numpy.arange(10 * 10, dtype='uint64')
+#             data.shape = [10, 10]
+#
+#             ts = TimeSeries(data,
+#                             times=numpy.arange(10, 20, dtype='uint64'),
+#                             units='x',
+#                             time_units='s',
+#                             source=ds,
+#                             histo_bins=None)
+#
+#             with pytest.raises(AssertionError):
+#                 hlstorage.put_ts(ts)
+#
+#             ts.histo_bins = histo_bins
+#             hlstorage.put_ts(ts)
+#             assert ts == hlstorage.get_ts(ds)
+#
+#             ts_ds = list(hlstorage.iter_ts())
+#             assert len(ts_ds) == 1
+#             assert ts_ds[0] == ds
+#
+#             assert ts == hlstorage.get_ts(ts.source)
 
 
 # noinspection PyStatementEffect
 def test_hlstorage_sensor():
     with in_temp_dir() as root:
         with make_storage(root, existing=False) as storage:
-            hlstorage = HLStorageBase(storage, WallyDB)
+            hlstorage = SensorStorage(storage, WallyDB)
             time_ds = DataSource(node_id="1.1.2.3:23", metric='collected_at')
             sensor_times = numpy.arange(20)
             sensor_data = numpy.arange(10)

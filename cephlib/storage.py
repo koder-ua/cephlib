@@ -5,12 +5,12 @@ This module contains interfaces for storage classes
 import os
 import re
 import json
-import array
 import shutil
 import logging
+import collections
 from typing import Any, Type, IO, Tuple, cast, List, Dict, Iterable, Iterator, NamedTuple, Optional
 
-from .types import NumVector, DataSource
+from .types import NumVector, get_arr_info
 from .istorage import IStorable, ISimpleStorage, ISerializer, IStorage, _Raise, ObjClass
 
 try:
@@ -23,6 +23,11 @@ try:
 
 except ImportError:
     yaml = None
+
+try:
+    import pyaml
+except ImportError:
+    pyaml = None
 
 
 logger = logging.getLogger("cephlib")
@@ -143,7 +148,7 @@ if yaml:
         """Serialize data to yaml"""
         def pack(self, value: IStorable) -> bytes:
             try:
-                return yaml.dump(value, Dumper=Dumper, encoding="utf8")
+                return yaml.dump(value, Dumper=Dumper, encoding="utf8", width=160)
             except Exception as exc:
                 raise ValueError("Can't pickle to yaml: {!r}".format(type(value))) from exc
 
@@ -155,46 +160,30 @@ if yaml:
         """Serialize data to yaml"""
         def pack(self, value: IStorable) -> bytes:
             try:
-                return yaml.safe_dump(value, encoding="utf8")
+                return yaml.safe_dump(value, encoding="utf8", width=160)
             except Exception as exc:
                 raise ValueError("Can't pickle to yaml: {!r}".format(type(value))) from exc
 
         def unpack(self, data: bytes) -> Any:
             return yaml.safe_load(data.decode('utf8'))
 
+    if pyaml:
+        class PYAMLSerializer(ISerializer):
+            """Serialize data to yaml"""
+            def pack(self, value: IStorable) -> bytes:
+                try:
+                    if isinstance(value, IStorable) and hasattr(value.__class__, 'raw'):
+                        return pyaml.dumps(value.raw(), width=160)
+                    return pyaml.dumps(value, width=160)
+                except Exception as exc:
+                    raise ValueError("Can't pickle to yaml: {!r}".format(type(value))) from exc
+
+            def unpack(self, data: bytes) -> Any:
+                return yaml.safe_load(data.decode('utf8'))
+    else:
+        PYAMLSerializer = None
 else:
-    YAMLSerializer = SAFEYAMLSerializer = None
-
-
-def get_arr_info(obj: Any) -> Tuple[str, List[int]]:
-    if numpy is not None:
-        if isinstance(obj, numpy.ndarray):
-            return (obj.dtype.name, list(obj.shape))
-
-    if isinstance(obj, array.array):
-        return ({'f': 'float32',
-                 'd': 'float64',
-                 'b': 'int8',
-                 'B': 'uint8',
-                 'h': 'int16',
-                 'i': 'int16',
-                 'I': 'uint16',
-                 'l': 'int32',
-                 'L': 'uint32',
-                 'q': 'int64',
-                 'Q': 'uint64',
-        }[obj.typecode], [len(obj)])
-
-    shape = []
-    while isinstance(obj, (list, tuple)):
-        shape.append(len(obj))
-        obj = obj[0]
-
-    if isinstance(obj, int):
-        return ('int64', shape)
-
-    assert isinstance(obj, float)
-    return ('float64', shape)
+    PYAMLSerializer = YAMLSerializer = SAFEYAMLSerializer = None
 
 
 class Storage(IStorage):
@@ -205,6 +194,11 @@ class Storage(IStorage):
         self.sstorage = sstorage
         self.serializer = serializer
         self.cache = {}
+        self.other_caches = collections.defaultdict(dict)
+
+    def flush(self):
+        self.cache = {}
+        self.other_caches = collections.defaultdict(dict)
 
     def sub_storage(self, *path: str) -> 'Storage':
         fpath = "/".join(path)
@@ -259,6 +253,7 @@ class Storage(IStorage):
     def put_raw(self, val: bytes, *path: str) -> str:
         path_s = "/".join(path)
         self.sstorage.put(val, path_s)
+        self.cache.pop(path_s, None)
         return self.get_fname(path_s)
 
     def get_fname(self, fpath: str) -> str:
@@ -268,11 +263,14 @@ class Storage(IStorage):
         return self.sstorage.get("/".join(path))
 
     def append_raw(self, value: bytes, *path: str) -> None:
-        with self.sstorage.get_fd("/".join(path), "rb+") as fd:
+        path_s = "/".join(path)
+        with self.sstorage.get_fd(path_s, "rb+") as fd:
             fd.seek(0, os.SEEK_END)
             fd.write(value)
+        self.cache.pop(path_s, None)
 
     def get_fd(self, path: str, mode: str = "r") -> IO:
+        self.cache.pop(path, None)
         return self.sstorage.get_fd(path, mode)
 
     def sync(self) -> None:
@@ -327,17 +325,18 @@ class Storage(IStorage):
             header2 = None
         return dtype, ext_header, header, header2
 
-    def get_array(self, path: str) -> ArrayData:
+    def get_array(self, path: str, nc: bool = False) -> ArrayData:
         assert numpy is not None
 
         with self.sstorage.get_fd(path, "rb") as fd:
             fd.seek(0, os.SEEK_SET)
 
-            stats = os.fstat(fd.fileno())
-            if path in self.cache:
-                size, atime, arr_info = self.cache[path]
-                if size == stats.st_size and atime == stats.st_atime_ns:
-                    return arr_info
+            if not nc:
+                stats = os.fstat(fd.fileno())
+                if path in self.cache:
+                    size, atime, arr_info = self.cache[path]
+                    if size == stats.st_size and atime == stats.st_atime_ns:
+                        return arr_info
 
             data_dtype, header, _, header2 = self.read_headers(fd)
             dt = fd.read().decode(self.csv_file_encoding).strip()
@@ -352,7 +351,9 @@ class Storage(IStorage):
             arr = None
 
         arr_data = ArrayData(header, header2, arr)
-        self.cache[path] = (stats.st_size, stats.st_atime_ns, arr_data)
+        if not nc:
+            self.cache[path] = (stats.st_size, stats.st_atime_ns, arr_data)
+
         return arr_data
 
     def put_array(self, path: str,
@@ -361,12 +362,16 @@ class Storage(IStorage):
                   header2: NumVector = None,
                   append_on_exists: bool = False) -> None:
 
+        self.cache.pop(path, None)
         dtype, shape = get_arr_info(data)
         dtype2 = None if header2 is None else get_arr_info(header2)[0]
         header = [dtype] + (['false', ''] if header2 is None else ['true', dtype2]) + header
         exists = append_on_exists and path in self.sstorage
 
-        vw = data.view().reshape((data.shape[0], 1)) if (numpy and len(shape) == 1) else data
+        vw = data.view().reshape((data.shape[0], 1)) \
+             if (numpy and isinstance(data, numpy.ndarray) and len(shape) == 1) \
+             else data
+
         mode = "cb" if not exists else "rb+"
 
         with self.sstorage.get_fd(path, mode) as fd:
@@ -396,7 +401,7 @@ class Storage(IStorage):
                 numpy.savetxt(fd, vw, delimiter=',', newline="\n", fmt="%lu")
             else:
                 assert len(shape) == 1
-                fd.write(("{},\n" * len(vw)).format(*data)[:-2].encode(self.csv_file_encoding))
+                fd.write(("{}\n" * len(vw)).format(*data)[:-2].encode(self.csv_file_encoding))
 
             if not exists:
                 fd.truncate()
@@ -481,6 +486,7 @@ class AttredStorage:
 
 serializer_map = {
     'safe': SAFEYAMLSerializer,
+    'pretty': PYAMLSerializer,
     'yaml': YAMLSerializer,
     'json': JsonSerializer,
     'js': JsonSerializer,
@@ -500,25 +506,3 @@ def make_storage(url, existing=False, serializer='safe'):
     fstor = FSStorage(url, existing)
     return Storage(fstor, serializer_map[serializer]())
 
-
-def append_sensor(storage: IStorage,
-                  data: NumVector,
-                  ds: DataSource,
-                  units: str,
-                  sensor_time_path: str,
-                  sensor_data_path: str,
-                  expected_arr_tag: str = 'csv') -> None:
-
-    assert ds.tag is None or ds.tag == expected_arr_tag, \
-        "Incorrect source tag == {!r}, must be {!r}".format(ds.tag, expected_arr_tag)
-
-    dtype, shape = get_arr_info(data)
-
-    if ds.metric == 'collected_at':
-        assert len(shape) == 1, "collected_at data must be 1D array"
-        path = sensor_time_path
-    else:
-        path = sensor_data_path
-
-    path = path.format_map(ds.__dict__)
-    storage.put_array(path, data, header=[units], append_on_exists=True)

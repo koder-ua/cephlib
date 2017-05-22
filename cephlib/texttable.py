@@ -153,6 +153,9 @@ class Texttable:
     HLINES = 1 << 2
     VLINES = 1 << 3
 
+    class HLINE:
+        pass
+
     def __init__(self, max_width=80):
         """Constructor
 
@@ -175,6 +178,9 @@ class Texttable:
         self._chars_bottom = (chr(0x2514), chr(0x2500), chr(0x2534), chr(0x2518))
         self._char_vert = chr(0x2502)
         self._align = None
+
+    def set_deco(self, val):
+        self._deco = val
 
     def _reset(self):
         """Reset the instance
@@ -273,16 +279,19 @@ class Texttable:
         - cells can contain newlines and tabs
         """
 
-        self._check_row_size(array)
+        if array is self.HLINE:
+            self._rows.append(array)
+        else:
+            self._check_row_size(array)
 
-        if not hasattr(self, "_dtype"):
-            self._dtype = ["a"] * self._row_size
+            if not hasattr(self, "_dtype"):
+                self._dtype = ["a"] * self._row_size
 
-        cells = []
-        for i, x in enumerate(array):
-            cells.append(self._str(i, x))
+            cells = []
+            for i, x in enumerate(array):
+                cells.append(self._str(i, x))
 
-        self._rows.append(cells)
+            self._rows.append(cells)
 
     def add_rows(self, rows, header=True):
         """Add several rows in the rows stack
@@ -327,6 +336,9 @@ class Texttable:
         length = 0
         for row in self._rows:
             length += 1
+            if row is self.HLINE:
+                out += self._hline(*self._chars_middle)
+                continue
             out += self._draw_line(row)
             if self._has_hlines() and length < len(self._rows):
                 out += self._hline(*self._chars_middle)
@@ -455,11 +467,12 @@ class Texttable:
         if self._header:
             maxi = [ self._len_cell(x) for x in self._header ]
         for row in self._rows:
-            for cell,i in zip(row, list(range(len(row)))):
-                try:
-                    maxi[i] = max(maxi[i], self._len_cell(cell))
-                except (TypeError, IndexError):
-                    maxi.append(self._len_cell(cell))
+            if row is not self.HLINE:
+                for cell,i in zip(row, list(range(len(row)))):
+                    try:
+                        maxi[i] = max(maxi[i], self._len_cell(cell))
+                    except (TypeError, IndexError):
+                        maxi.append(self._len_cell(cell))
         items = len(maxi)
         length = sum(maxi)
         if self._max_width and length + items * 3 + 1 > self._max_width:

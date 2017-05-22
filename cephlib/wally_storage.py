@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List
 from .node import NodeInfo
 
 
@@ -25,7 +25,7 @@ class WallyDB:
     plot_r = r'{suite_id}\.{job_id}/{node_id}\.{sensor}\.{dev}\.{metric}\.{tag}'
     txt_report = report_root + '{suite_id}_report.txt'
 
-    job_extra = 'meta/{suite_id}.{job_id}/{tag}'
+    job_extra = 'meta/{suite_id}.{job_id}/{name}.yaml'
 
     job_cfg = job_cfg_r.replace("\\.", '.')
     suite_cfg = suite_cfg_r.replace("\\.", '.')
@@ -38,8 +38,10 @@ class WallyDB:
     all_nodes = 'nodes/all.yml'
     nodes_params = 'nodes/params.js'
     rpc_logs = "rpc_logs/{node_id}.txt"
-    hw_info = "nodes/hw_{node_id}.yml"
-    sw_info = "nodes/sw_{node_id}.yml"
+    config = 'config.yml'
+    run_interval = 'run_interval.yml'
+    resource_usage_rel = 'resource_usage'
+    res_code = 'result_code.yml'
 
 
 def find_nodes_by_roles(storage: IStorage, roles: List[str]) -> List[str]:

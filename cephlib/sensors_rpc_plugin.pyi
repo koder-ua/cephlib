@@ -4,6 +4,7 @@ Pid = NewType('Pid', str)
 AnyFunc = Callable[..., Any]
 PrefixList = Optional[List[str]]
 SensorDict = Dict[str, int]
+SENSOR2DEV_TYPE = None  # type: Dict[str, str]
 
 def provides(name: str) -> Callable[[AnyFunc], AnyFunc]: ...
 def get_pid_name(pid: Pid) -> str: ...

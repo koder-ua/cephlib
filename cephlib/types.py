@@ -1,6 +1,6 @@
 import re
 import array
-from typing import TypeVar, List, Union, Optional, Tuple, cast
+from typing import TypeVar, List, Union, Optional, Tuple, cast, Any
 
 try:
     import numpy
@@ -74,3 +74,25 @@ class DataSource:
 
     def __hash__(self) -> int:
         return hash(self.tpl)
+
+
+def get_arr_info(obj: Any) -> Tuple[str, List[int]]:
+    if numpy is not None:
+        if isinstance(obj, numpy.ndarray):
+            return obj.dtype.name, list(obj.shape)
+
+    if isinstance(obj, array.array):
+        return ({'f': 'float32', 'd': 'float64', 'b': 'int8', 'B': 'uint8',
+                 'h': 'int16', 'H': 'uint16', 'i': 'int16', 'I': 'uint16',
+                 'l': 'int32', 'L': 'uint32', 'q': 'int64', 'Q': 'uint64'}[obj.typecode], [len(obj)])
+
+    shape = []
+    while isinstance(obj, (list, tuple)):
+        shape.append(len(obj))
+        obj = obj[0]
+
+    if isinstance(obj, int):
+        return 'int64', shape
+
+    assert isinstance(obj, float)
+    return 'float64', shape
