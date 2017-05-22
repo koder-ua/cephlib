@@ -397,7 +397,7 @@ def plot_v_over_time(pp: PlotParams, units: str, ts: TimeSeries,
         pp.ax.plot(data_times, data, pp.style.point_shape, color=pp.colors.primary_color, alpha=alpha, label="Data")
 
         if len(outliers) > 0:
-            if outliers_4q_idxs:
+            if outliers_4q_idxs is not None:
                 label = "{}Q < Outliers < {}Q".format(pp.style.outliers_q_nd, pp.style.outliers_hide_q_nd)
             else:
                 label = "{}Q+ Outliers".format(pp.style.outliers_q_nd)

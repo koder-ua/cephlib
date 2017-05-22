@@ -89,7 +89,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
     assert ts.data.dtype.name == 'uint64', "Data dtype for {}=={} != uint64".format(ts.source, ts.data.dtype.name)
     assert ts.times.dtype.name == 'uint64', "Time dtype for {}=={} != uint64".format(ts.source, ts.times.dtype.name)
 
-    output_sz = int(ts.times[-1]) // coef - int(ts.times[0]) // coef + 2
+    output_sz = int(ts.times[-1] / coef + 0.5) - int(ts.times[0] / coef + 0.5) + 2
     result = numpy.zeros(output_sz, dtype=ts.data.dtype.name)
 
     if tp in ('qd', 'agg'):
@@ -104,8 +104,6 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
 
         result = result[:sz]
         output_sz = sz
-
-        rtimes = int(ts.times[0] // coef) + numpy.arange(output_sz, dtype=ts.times.dtype)
     else:
         assert tp == 'fio'
         ridx = numpy.zeros(output_sz, dtype=ts.times.dtype)
@@ -119,8 +117,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
                                       allow_broken_step)
         if sz_or_err <= 0:
             raise ValueError("Error in input array at index {}. {}".format(-sz_or_err, ts.source))
-
-        rtimes = int(ts.times[0] // coef) + numpy.arange(sz_or_err, dtype=ts.times.dtype)
+        output_sz = sz_or_err
 
         empty = numpy.zeros(len(ts.histo_bins), dtype=ts.data.dtype) if ts.source.metric == 'lat' else 0
         res = []
@@ -131,6 +128,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
                 res.append(ts.data[idx])
         result = numpy.array(res, dtype=ts.data.dtype)
 
+    rtimes = int(ts.times[0] / coef + 0.5) + numpy.arange(output_sz, dtype=ts.times.dtype)
     res_ts = TimeSeries(result,
                         times=rtimes,
                         units=ts.units,

@@ -34,8 +34,8 @@ class TimeSeries:
     def select(self, trange: Tuple[float, float]) -> 'TimeSeries':
         selected = copy.copy(self)
         idx1, idx2 = numpy.searchsorted(self.times, (trange[0] * self.sec2ts_coef, trange[1] * self.sec2ts_coef))
-        idx2 += 1
-        idx1 = max(0, idx1 - 1)
+        idx2 = min(idx2 + 2, len(self.times))
+        idx1 = max(0, idx1 - 2)
         selected.data = self.data[idx1: idx2]
         selected.times = self.times[idx1: idx2]
         assert len(selected.data) == len(selected.times)
