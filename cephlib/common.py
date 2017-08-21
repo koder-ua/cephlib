@@ -22,12 +22,13 @@ except ImportError:
 import logging.config as logging_config
 from .types import Number, TNumber
 
-logger = logging.getLogger("common")
+logger = logging.getLogger("cephlib")
 
 
 # command execution ----------------------------------------------------------------------------------------------------
 
-def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: int = 20, log: bool = True) -> bytes:
+def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: int = 20,
+                log: bool = True, merge_err: bool = False) -> bytes:
 
     if log:
         logger.debug("CMD %r", cmd)
@@ -71,11 +72,11 @@ def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: i
     stdout_data, stderr_data = res  # type: bytes, bytes
     if 0 != proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, cmd_str, stdout_data + stderr_data)
-    return stdout_data
+    return stdout_data + (stderr_data if merge_err else b'')
 
 
 def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retry: int = 3, timeout: int = 20,
-            input_data: bytes = None) -> bytes:
+            input_data: bytes = None, merge_err: bool = False) -> bytes:
     if no_retry:
         max_retry = 0
 
@@ -83,7 +84,7 @@ def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retr
     logger.debug("SSH %s %r", host, cmd)
     while True:
         try:
-            return run_locally(ssh_cmd, input_data=input_data, timeout=timeout, log=False)
+            return run_locally(ssh_cmd, input_data=input_data, timeout=timeout, log=False, merge_err=merge_err)
         except subprocess.CalledProcessError as lexc:
             if max_retry == 0:
                 raise

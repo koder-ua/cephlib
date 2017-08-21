@@ -14,13 +14,13 @@ RSMAP_10_low = [('f', Fraction(1, 1000**4)),
                 ('u', Fraction(1, 1000**2)),
                 ('m', Fraction(1, 1000))]
 
-RSMAP_10_hight = [(' ', 1),
-                  (' K', 1000),
-                  (' M', 1000 ** 2),
-                  (' G', 1000 ** 3),
-                  (' T', 1000 ** 4),
-                  (' P', 1000 ** 5),
-                  (' E', 1000 ** 6)]
+RSMAP_10_hight = [('', 1),
+                  ('K', 1000),
+                  ('M', 1000 ** 2),
+                  ('G', 1000 ** 3),
+                  ('T', 1000 ** 4),
+                  ('P', 1000 ** 5),
+                  ('E', 1000 ** 6)]
 
 SMAP_10_hight = {ext.strip().lower(): val for ext, val in RSMAP_10_hight}
 SMAP = {ext[0].lower(): val for ext, val in RSMAP}
@@ -75,13 +75,13 @@ def has_second_digit_after_coma(x: float) -> bool:
 def b2ssize_10(value: Union[int, float]) -> str:
     # make mypy happy
     scale = 1
-    name = " "
+    name = ""
 
     if value == 0.0:
-        return "0 "
+        return "0"
 
     if value / RSMAP_10[0][1] < 1.0:
-        return "{:.2e} ".format(value)
+        return "{:.2e}".format(value)
 
     for name, scale in RSMAP_10:
         cval = value / scale

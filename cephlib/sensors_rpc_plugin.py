@@ -512,6 +512,7 @@ ALL_STAGES = [
     "started",
     "commit_queued_for_journal_write",
     "waiting_for_subop",
+    'waiting_for_rw_locks',
     "write_thread_in_journal_buffer",
     "op_commit",
     "op_applied",
@@ -638,17 +639,13 @@ class CephSensor(ArraysSensor):
                 self.prev_vals[osd_id] = self.set_osd_historic(self.historic_duration, self.historic_size, osd_id)
 
     def run_ceph_daemon_cmd(self, osd_id, args):
-        asok = "/var/run/ceph/{0}-osd.{}.asok".format(self.cluster, osd_id)
+        asok = "/var/run/ceph/{0}-osd.{1}.asok".format(self.cluster, osd_id)
         if admin_socket:
             res = admin_socket(asok, list(args.split()))
         else:
-            res = subprocess.check_output("ceph daemon {} {}".format(asok, args), shell=True)
+            res = subprocess.check_output("ceph daemon {0} {1}".format(asok, args), shell=True)
 
         return res
-
-    def store_to_db(self, metric, osd_id, data):
-        key = "{0}.{1}.{2}".format(metric, osd_id, int(time.time() * 100))
-        self.disk_stor[key] = data
 
     def collect(self):
         for osd_id in self.osd_ids:
@@ -750,23 +747,21 @@ class CephSensor(ArraysSensor):
 
     def get_updates(self):
         res = super(CephSensor, self).get_updates()
-        if self.disk_stor:
-            raise NotImplementedError("Updates from disk aren't implemented")
-        else:
-            if self.historic:
-                for osd_id, packed_ops in self.historic.items():
-                    res[("osd{0}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
-                self.historic = {}
 
-            if self.historic_js:
-                for osd_id, ops in self.historic_js.items():
-                    res[("osd{0}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
-                self.historic_js = {}
+        if self.historic:
+            for osd_id, packed_ops in self.historic.items():
+                res[("osd{0}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
+            self.historic = {}
 
-            if self.perf_dump:
-                for osd_id, ops in self.perf_dump.items():
-                    res[("osd{0}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
-                self.perf_dump = {}
+        if self.historic_js:
+            for osd_id, ops in self.historic_js.items():
+                res[("osd{0}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
+            self.historic_js = {}
+
+        if self.perf_dump:
+            for osd_id, ops in self.perf_dump.items():
+                res[("osd{0}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
+            self.perf_dump = {}
 
         return res
 

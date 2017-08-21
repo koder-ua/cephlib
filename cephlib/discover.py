@@ -2,7 +2,6 @@
 import json
 import logging
 from typing import Callable, Dict, List, Tuple, Optional
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 

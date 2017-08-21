@@ -274,30 +274,9 @@ def get_os(node: IRPCNode) -> OSRelease:
     """return os type, release and architecture for node.
     """
     arch = node.run("arch", nolog=True).strip()
-
-    try:
-        node.run("ls -l /etc/redhat-release", nolog=True)
-        return OSRelease('redhat', None, arch)
-    except:
-        pass
-
-    try:
-        node.run("ls -l /etc/debian_version", nolog=True)
-
-        release = None
-        for line in node.run("lsb_release -a", nolog=True).split("\n"):
-            if ':' not in line:
-                continue
-            opt, val = line.split(":", 1)
-
-            if opt == 'Codename':
-                release = val.strip()
-
-        return OSRelease('ubuntu', release, arch)
-    except:
-        pass
-
-    raise RuntimeError("Unknown os")
+    dist_type = node.run("lsb_release -i -s", nolog=True).lower()
+    codename = node.run("lsb_release -c -s", nolog=True).lower()
+    return OSRelease(dist_type, codename, arch)
 
 
 def get_data(rr: str, data: str) -> str:

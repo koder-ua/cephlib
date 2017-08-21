@@ -1,6 +1,6 @@
 import abc
 import itertools
-from typing import Any, IO, Tuple, List, Dict, Iterator, Union, Optional, Type, TypeVar, Iterable, Set
+from typing import Any, IO, Tuple, List, Dict, Iterator, Union, Optional, Type, TypeVar, Iterable
 from .types import DataSource, NumVector
 
 

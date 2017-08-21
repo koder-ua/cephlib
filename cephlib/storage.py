@@ -131,6 +131,19 @@ class RawSerializer(ISerializer):
         return data
 
 
+class TxtSerializer(ISerializer):
+    """Placeholder for no serialization"""
+    encoding = 'utf8'
+
+    def pack(self, value: IStorable) -> bytes:
+        if not isinstance(value, str):
+            raise ValueError("Can't serialize object {!r}".format(type(value)))
+        return value.encode(self.encoding)
+
+    def unpack(self, data: bytes) -> str:
+        return data.decode(self.encoding)
+
+
 class JsonSerializer(ISerializer):
     """Serialize data to json"""
     def pack(self, value: IStorable) -> bytes:
@@ -492,7 +505,7 @@ serializer_map = {
     'js': JsonSerializer,
     'raw': RawSerializer,
     'xml': RawSerializer,
-    'txt': RawSerializer,
+    'txt': TxtSerializer,
 }
 
 

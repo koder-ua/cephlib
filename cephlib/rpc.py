@@ -2,9 +2,9 @@ import json
 import time
 import socket
 import logging
+import subprocess
 
-
-from .common import check_output_ssh, CmdResult, run_ssh
+from .common import run_ssh, run_ssh
 from . import sensors_rpc_plugin
 
 from agent.agent import connect
@@ -26,24 +26,24 @@ def init_node(node_name, ssh_opts):
     Upload rpc code, start daemon, open RPC connection, upload plugins
     """
     try:
-        res = run_ssh(node_name, ssh_opts, 'python2.7 --version')
-        python_cmd = None
-        if res.code != 0:
-            res = run_ssh(node_name, ssh_opts, 'python --version')
-            if res.code == 0 and '2.7' in res.out:
-                python_cmd = 'python'
-        else:
-            python_cmd = 'python2.7'
+        for python_cmd in ('python2.7', 'python'):
+            try:
+                out = run_ssh(node_name, ssh_opts, python_cmd + ' --version', merge_err=True).decode('utf8')
+            except subprocess.SubprocessError:
+                continue
 
-        assert python_cmd, "Failed to run python2.7 on node {0}".format(node_name)
+            if '2.7' in out:
+                break
+        else:
+            raise AssertionError("Failed to run python2.7 on node {0}".format(node_name))
 
         path = '/tmp/ceph_agent.py'
-        check_output_ssh(node_name, ssh_opts, "'cat > {0}'".format(path), input=agent_code)
+        run_ssh(node_name, ssh_opts, "'cat > {0}'".format(path), input_data=agent_code.encode('utf8'))
 
         log_file = '/tmp/ceph_agent.log'
         ip = socket.gethostbyname(node_name)
         cmd = '{0} {1} server --listen-addr={2}:0 --daemon --show-settings --stdout-file={3}'
-        out = check_output_ssh(node_name, ssh_opts, cmd.format(python_cmd, path, ip, log_file))
+        out = run_ssh(node_name, ssh_opts, cmd.format(python_cmd, path, ip, log_file)).decode('utf8')
         data_j = json.loads(out)
         daemon_pid = data_j["daemon_pid"]
 
@@ -58,20 +58,13 @@ def init_node(node_name, ssh_opts):
     return rpc, daemon_pid
 
 
-def rpc_run_ch(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout=0.01, check_timeout=0.1, log=True):
-    res = rpc_run(rpc, cmd, timeout, input_data, node_name=node_name,
-                  start_timeout=start_timeout, check_timeout=check_timeout, log=log)
-    assert res.code == 0, "{0!r} is failed with code {1}. output is {2!r}".format(cmd, res.code, res.out[-200:])
-    return res.out
-
-
 def rpc_run(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout=0.01, check_timeout=0.1, log=True):
     if log:
         logger.debug("%s: %s", node_name, cmd)
 
     pid = rpc.cli.spawn(cmd, timeout=timeout, input_data=input_data)
-    out = ""
-    err = ""
+    out = b""
+    err = b""
 
     time.sleep(start_timeout)
 
@@ -79,8 +72,9 @@ def rpc_run(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout
         ecode, dout, derr = rpc.cli.get_updates(pid)
         out += dout
         err += err
-        if ecode == 0:
-            return CmdResult(0, out)
-        elif ecode is not None:
-            return CmdResult(ecode, err)
+        if ecode is not None:
+            if ecode == 0:
+                return out
+            else:
+                raise subprocess.CalledProcessError(ecode, cmd, output=out, stderr=err)
         time.sleep(check_timeout)

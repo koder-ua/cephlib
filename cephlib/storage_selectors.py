@@ -33,7 +33,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
     if tp in ('qd', 'agg'):
         # both data and times must be 1d compact arrays
         assert len(ts.data.strides) == 1, "ts.data.strides must be 1D, not " + repr(ts.data.strides)
-        assert ts.data.dtype.itemsize == ts.data.strides[0], "ts.data array must be compact"
+        assert ts.data.dtype.itemsize == ts.data.strides[0], "ts.data array of {} must be compact".format(ts.source)
 
     assert len(ts.times.strides) == 1, "ts.times.strides must be 1D, not " + repr(ts.times.strides)
     assert ts.times.dtype.itemsize == ts.times.strides[0], "ts.times array must be compact"
@@ -323,8 +323,6 @@ def update_storage_selector(storage: ISensorStorage, rc: DevRolesConfig, nodes: 
             per_node.append({"type=" + dev_tp: dev_role})
         rc.append({"role=" + node_role: per_node})
 
-    # {sensor: [(node, dev), ...]}
-    # sensor2nodedev_cache = {}  # type: Dict[str, Set[Tuple[str, str]]]
     all_devs = {}  # type: Dict[str, Dict[str, Set[str]]]
     # All devices, available in sensor storage in format
     #       {node_id: {dev_type: {dev_name, ...}}}
@@ -332,9 +330,6 @@ def update_storage_selector(storage: ISensorStorage, rc: DevRolesConfig, nodes: 
         assert ds.tag == ISensorStorage.ts_arr_tag
         node_sens = all_devs.setdefault(ds.node_id, {})
         node_sens.setdefault(SENSOR2DEV_TYPE.get(ds.sensor), set()).add(ds.dev)
-        # sensor2nodedev_cache.setdefault(ds.sensor, set()).add((ds.node_id, ds.dev))
-
-    # storage.set_search_cache(sensor2nodedev_cache)
 
     # rules hold next structure:
     #    - node_checker:
@@ -345,6 +340,7 @@ def update_storage_selector(storage: ISensorStorage, rc: DevRolesConfig, nodes: 
     for selectors_tree in rc:
         assert len(selectors_tree) == 1
         (node_selector, devs_selectors), = selectors_tree.items()
+        # print("node_selector =", node_selector)
         node_checker = get_node_checker(node_selector)
 
         dev2roles_mappers = []
