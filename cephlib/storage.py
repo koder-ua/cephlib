@@ -374,7 +374,6 @@ class Storage(IStorage):
                   header: List[str],
                   header2: NumVector = None,
                   append_on_exists: bool = False) -> None:
-
         self.cache.pop(path, None)
         dtype, shape = get_arr_info(data)
         dtype2 = None if header2 is None else get_arr_info(header2)[0]
@@ -414,7 +413,8 @@ class Storage(IStorage):
                 numpy.savetxt(fd, vw, delimiter=',', newline="\n", fmt="%lu")
             else:
                 assert len(shape) == 1
-                fd.write(("{}\n" * len(vw)).format(*data)[:-2].encode(self.csv_file_encoding))
+                fc = ("{}\n" * len(vw)).format(*vw)
+                fd.write(fc.encode(self.csv_file_encoding))
 
             if not exists:
                 fd.truncate()

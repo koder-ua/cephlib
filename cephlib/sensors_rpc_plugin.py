@@ -505,48 +505,52 @@ def get_val(dct, path):
     return dct[path]
 
 
-CephOp = collections.namedtuple("CephOp", "age descr_idx duration initiated_at status stages extra1 extra2")
-ALL_STAGES = [
-    "queued_for_pg",
-    "reached_pg",
-    "started",
-    "commit_queued_for_journal_write",
-    "waiting_for_subop",
-    'waiting_for_rw_locks',
-    "write_thread_in_journal_buffer",
-    "op_commit",
-    "op_applied",
-    "sub_op_applied",
-    "journaled_completion_queued",
-    "commit_sent",
-    "done",
-    "subop_commit_rec",
-    "subop_apply_rec"
-]
+class CephOp:
+    descriptions = ["osd_repop_reply", "osd_op", "osd_repop"]
+    basic_stages = [
+        "initiated",
+        "queued_for_pg",
+        "reached_pg",
+        "started",
+        "commit_queued_for_journal_write",
+        "waiting_for_rw_locks",
+        "write_thread_in_journal_buffer",
+        "waiting_for_subop",
+        "op_commit",
+        "op_applied",
+        "sub_op_applied",
+        "journaled_completion_queued",
+        "commit_sent",
+        "done"
+    ]
 
+    waiting_stage_lname = "waiting for subops from"
+    waiting_stage = "waiting_for_subops"
+    sub_op_commit = "sub_op_commit_rec"
+    sub_op_applied = "sub_op_applied_rec"
 
-CEPH_OP_DESCR_IDX = {
-    "osd_repop_reply": 0,
-    "osd_op": 1,
-    "osd_repop": 2
-}
+    all_stages = basic_stages + [sub_op_commit, sub_op_applied]
+
+    def __init__(self, age, descr_idx, duration, initiated_at, status, stages, sub_op_commit, sub_op_applied):
+        self.age = age  # ???
+        self.descr_idx = descr_idx  # type index from CephOp.descriptions
+        self.duration = duration  # total time
+        self.initiated_at = initiated_at  # ctime of operation initiation
+        self.status = status  # current status
+        self.stages = stages  # list of times, when particular op from CephOp.basic_stages started
+        self.sub_op_commit = sub_op_commit  # list of times for CephOp.extra1_name events type
+        self.sub_op_applied = sub_op_applied  # list of times for CephOp.extra2_name events type
 
 
 STAGE_TIME_FORMAT = 'I'
 STAGE_TIME_FORMAT_SZ = struct.calcsize(STAGE_TIME_FORMAT)
 MAX_STAGE_TIME = 2 ** 32 - 1
 
-
-waiting_subop = "waiting for subops from"
-sub_op_commit = "sub_op_commit_rec from"
-sub_op_applied = "sub_op_applied_rec from"
-
-
-ceph_op_format = "!BfBfL" + STAGE_TIME_FORMAT * len(ALL_STAGES)
+ceph_op_format = "!BfBfL" + STAGE_TIME_FORMAT * len(CephOp.basic_stages)
 OP_SIZE = struct.calcsize(ceph_op_format)
 VERSION = 1
-BOR = 'EF34'
-EOR = 'AB12'
+BOR = b'EF34'
+EOR = b'AB12'
 assert struct.calcsize('!B') == 1
 
 
@@ -582,7 +586,7 @@ def unpack_ceph_op(stream):
     return CephOp(age, descr_idx, duration, init_at * 1000000, None, stages, extra_stages1, extra_stages2)
 
 
-def to_ctime_ms(time_str):
+def to_ctime_mks(time_str):
     dt_s, micro_sec = time_str.split('.')
     dt = time.strptime(dt_s, '%Y-%m-%d %H:%M:%S')
     return int(time.mktime(dt) * 1000000 + int(micro_sec))
@@ -605,6 +609,32 @@ def unmerge_strings(blob):
         ln, = struct.unpack(LN_FORMAT, blob[offset: offset + LN_FORMAT_SZ])
         yield blob[offset + LN_FORMAT_SZ: offset + LN_FORMAT_SZ + ln]
         offset += LN_FORMAT_SZ + ln
+
+
+def parse_ops_timings(ops_list, op_type, expected_evts):
+    for opl in ops_list:
+        for op in opl:
+            if op['description'].split("(", 1)[0] == op_type:
+                names = []
+                times = []
+                sub_op_idx = 0
+                for evt in op["type_data"][-1]:
+                    nm = evt['event']
+                    times.append(to_ctime_mks(evt['time']))
+                    if nm not in CephOp.basic_stages:
+                        if nm.startswith(CephOp.waiting_stage_lname):
+                            nm = CephOp.waiting_stage
+                        elif nm.startswith(CephOp.sub_op_commit):
+                            nm = CephOp.sub_op_commit + '_' + str(sub_op_idx)
+                            sub_op_idx += 1
+                        else:
+                            break
+                    names.append(nm)
+                else:
+                    assert names[0] == 'initiated', str(names)
+                    times = [tm - times[0] for tm in times]
+                    if sorted(names) == expected_evts:
+                        yield dict(zip(names, times))
 
 
 @provides("ceph")
@@ -649,28 +679,40 @@ class CephSensor(ArraysSensor):
 
     def collect(self):
         for osd_id in self.osd_ids:
-            if self.historic is not None:
+            if self.historic_js is not None or self.historic is not None:
                 ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
-                ops_json_z = zlib.compress(ops_json)
-                if self.historic_js is not None:
-                    self.historic_js.setdefault(osd_id, []).append(ops_json_z)
 
+                # filter ops, which was in previous set
                 curr = set()
-
-                new_ops = []
+                ops = []
                 for op in json.loads(ops_json)['Ops']:
                     curr.add(op['description'])
-                    if op['description'] in self.prev_historic:
-                        continue
-                    op_obj = self.parse_op(op)
-                    if op_obj:
-                        new_ops.append(op_obj)
-
-                data = "".join(pack_ceph_op(op_obj) for op_obj in new_ops)
-                data_z = zlib.compress(data)
-                self.historic.setdefault(osd_id, []).append(data_z)
-
+                    if op['description'] not in self.prev_historic:
+                        ops.append(op)
                 self.prev_historic = curr
+
+                if not ops:
+                    continue
+
+                if self.historic_js is not None:
+                    ops_json_z = zlib.compress(json.dumps(ops, indent=1))
+                    self.historic_js.setdefault(osd_id, []).append(ops_json_z)
+
+                if self.historic:
+                    new_ops = []
+                    for op in json.loads(ops_json)['Ops']:
+                        curr.add(op['description'])
+                        if op['description'] in self.prev_historic:
+                            continue
+                        op_obj = self.parse_op(op)
+                        if op_obj:
+                            new_ops.append(op_obj)
+
+                    data = "".join(pack_ceph_op(op_obj) for op_obj in new_ops)
+                    data_z = zlib.compress(data)
+                    self.historic.setdefault(osd_id, []).append(data_z)
+
+                    self.prev_historic = curr
 
             if 'in_flight' in self.params.get('sources', []):
                 raise NotImplementedError()
@@ -689,6 +731,7 @@ class CephSensor(ArraysSensor):
 
     @classmethod
     def parse_op(cls, op):
+        raise NotImplementedError("Need update, accordingly to changes in CephOp")
         descr = op['description']
         if descr.startswith('osd_repop('):
             # slave op
@@ -731,7 +774,8 @@ class CephSensor(ArraysSensor):
                 elif name.startswith(sub_op_applied):
                     extra2.append(tm)
                 else:
-                    raise ValueError("Unknown stage type {0!r}".format(name))
+                    pass
+                    # raise ValueError("Unknown stage type {0!r}".format(name))
         return CephOp(age=op['age'],
                       descr_idx=CEPH_OP_DESCR_IDX[descr.split("(", 1)[0]],
                       duration=op['duration'],
