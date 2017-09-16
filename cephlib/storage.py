@@ -377,7 +377,6 @@ class Storage(IStorageBase):
                   header: List[str],
                   header2: NumVector = None,
                   append_on_exists: bool = False) -> None:
-        assert numpy is not None
         self.cache.pop(path, None)
         dtype, shape = get_arr_info(data)
         dtype2 = None if header2 is None else get_arr_info(header2)[0]
