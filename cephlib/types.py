@@ -6,6 +6,7 @@ try:
     import numpy
     NumVector = Union[numpy.ndarray, array.array, List[int], List[float]]
 except ImportError:
+    numpy = None
     NumVector = Union[array.array, List[int], List[float]]
 
 
