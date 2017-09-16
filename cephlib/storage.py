@@ -11,7 +11,7 @@ import collections
 from typing import Any, Type, IO, Tuple, cast, List, Dict, Iterable, Iterator, NamedTuple, Optional
 
 from .types import NumVector, get_arr_info
-from .istorage import IStorable, ISimpleStorage, ISerializer, IStorage, _Raise, ObjClass
+from .istorage_nnp import IStorable, ISimpleStorage, ISerializer, _Raise, ObjClass, IStorageNNP
 
 try:
     import yaml
@@ -35,9 +35,11 @@ logger = logging.getLogger("cephlib")
 
 try:
     import numpy
+    from .istorage import IStorage
+    IStorageBase = IStorage
 except ImportError:
     numpy = None
-
+    IStorageBase = IStorageNNP
 
 ArrayData = NamedTuple("ArrayData",
                        [('header', List[str]), ('histo_bins', Optional[NumVector]), ('data', Optional[NumVector])])
@@ -199,7 +201,7 @@ else:
     PYAMLSerializer = YAMLSerializer = SAFEYAMLSerializer = None
 
 
-class Storage(IStorage):
+class Storage(IStorageBase):
     """interface for storage"""
     csv_file_encoding = 'utf8'
 
@@ -326,6 +328,7 @@ class Storage(IStorage):
     # --------------  Arrays -------------------------------------------------------------------------------------------
 
     def read_headers(self, fd) -> Tuple[str, List[str], List[str], Optional[NumVector]]:
+        assert numpy is not None
         header = fd.readline().decode(self.csv_file_encoding).rstrip().split(",")
         dtype, has_header2, header2_dtype, *ext_header = header
 
@@ -374,6 +377,7 @@ class Storage(IStorage):
                   header: List[str],
                   header2: NumVector = None,
                   append_on_exists: bool = False) -> None:
+        assert numpy is not None
         self.cache.pop(path, None)
         dtype, shape = get_arr_info(data)
         dtype2 = None if header2 is None else get_arr_info(header2)[0]
