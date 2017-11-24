@@ -685,7 +685,8 @@ class CephSensor(ArraysSensor):
                 # filter ops, which was in previous set
                 curr = set()
                 ops = []
-                for op in json.loads(ops_json)['Ops']:
+                hops = json.loads(ops_json)
+                for op in (hops['Ops'] if 'Ops' in hops else hops['ops']):
                     curr.add(op['description'])
                     if op['description'] not in self.prev_historic:
                         ops.append(op)
@@ -700,7 +701,8 @@ class CephSensor(ArraysSensor):
 
                 if self.historic:
                     new_ops = []
-                    for op in json.loads(ops_json)['Ops']:
+                    hops = json.loads(ops_json)
+                    for op in (hops['Ops'] if 'Ops' in hops else hops['ops']):
                         curr.add(op['description'])
                         if op['description'] in self.prev_historic:
                             continue

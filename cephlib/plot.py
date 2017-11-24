@@ -44,7 +44,7 @@ def hmap_from_2d(data: numpy.ndarray, max_xbins: int = 25,
     """
     assert len(data.shape) == 2
 
-    # calculate how many 'data' rows fit into single output interval
+    # calculate how many 'data' columns fit into single output interval
     num_points = data.shape[1]
     step = int(round(float(num_points) / max_xbins + 0.5))
 

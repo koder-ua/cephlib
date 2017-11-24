@@ -21,7 +21,7 @@ fs_plugin_code = get_code(fs_plugin)
 load_plugin_code = get_code(sensors_rpc_plugin)
 
 
-def init_node(node_name, ssh_opts):
+def init_node(node_name, ssh_opts, with_sudo=False):
     """init RPC connection to node
     Upload rpc code, start daemon, open RPC connection, upload plugins
     """
@@ -42,8 +42,9 @@ def init_node(node_name, ssh_opts):
 
         log_file = '/tmp/ceph_agent.log'
         ip = socket.gethostbyname(node_name)
-        cmd = '{0} {1} server --listen-addr={2}:0 --daemon --show-settings --stdout-file={3}'
-        out = run_ssh(node_name, ssh_opts, cmd.format(python_cmd, path, ip, log_file)).decode('utf8')
+        cmd_templ = '{0} {1} server --listen-addr={2}:0 --daemon --show-settings --stdout-file={3}'
+        cmd = ("sudo " if with_sudo else "") + cmd_templ.format(python_cmd, path, ip, log_file)
+        out = run_ssh(node_name, ssh_opts, cmd).decode('utf8')
         data_j = json.loads(out)
         daemon_pid = data_j["daemon_pid"]
 
