@@ -1,4 +1,5 @@
 import json
+import zlib
 import time
 import socket
 import logging
@@ -70,9 +71,12 @@ def rpc_run(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout
     time.sleep(start_timeout)
 
     while True:
-        ecode, dout, derr = rpc.cli.get_updates(pid)
-        out += dout
-        err += err
+        ecode, is_compressed, outerr, out_len = rpc.cli.get_updates(pid, compress_limit=512)
+        if is_compressed:
+            outerr = zlib.decompress(outerr)
+        out += outerr[:out_len]
+        err += outerr[out_len:]
+
         if ecode is not None:
             if ecode == 0:
                 return out

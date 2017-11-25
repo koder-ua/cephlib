@@ -28,6 +28,9 @@ except ImportError:
     noraise = lambda x: x
 
 
+from rpc_common import follow_symlink    # type: ignore
+
+
 try:
     from ceph_daemon import admin_socket
 except ImportError:
@@ -1087,4 +1090,20 @@ def rpc_find_pids_for_cmd(bname):
 
     logger.debug("Find pids for binary %s = %s", bname, res)
 
+    return res
+
+
+@noraise
+def rpc_get_block_devs_info(filter_virtual=True):
+    res = {}
+    for name in os.listdir("/sys/block"):
+        rot_fl = os.path.join("/sys/block", name, 'queue', 'rotational')
+        sched_fl = os.path.join("/sys/block", name, 'queue', 'scheduler')
+        if os.path.isfile(rot_fl) and os.path.isfile(sched_fl):
+            if filter_virtual and follow_symlink('/sys/block/' + name).startswith('/sys/devices/virtual'):
+                continue
+            res[name] = (
+                open(rot_fl).read().strip() == 1,
+                open(sched_fl).read()
+            )
     return res
