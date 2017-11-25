@@ -2,6 +2,5 @@ numpy
 scipy
 matplotlib
 seaborn
-xmlbuilder3
 paramiko
 PyYAML
