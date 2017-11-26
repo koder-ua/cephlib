@@ -24,12 +24,9 @@ except ImportError:
 
 try:
     from agent_module import Pool, noraise, BIO, tostr, IS_PYTHON3, Promote  # type: ignore
+    from rpc_common import follow_symlink    # type: ignore
 except ImportError:
     noraise = lambda x: x
-
-
-from rpc_common import follow_symlink    # type: ignore
-
 
 try:
     from ceph_daemon import admin_socket
