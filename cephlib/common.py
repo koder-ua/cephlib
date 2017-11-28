@@ -90,9 +90,18 @@ def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retr
                 raise
             exc = lexc
 
+        err = exc.output
+        if isinstance(err, bytes):
+            err = err.decode('utf8')
+
+        if err:
+            logger.warning("SSH error for host %s. Cmd: %r. Err is %r. Will retry", host, cmd, err)
+        else:
+            logger.warning("SSH error for host %s. Cmd: %r. Most probably host " +
+                           "is unreachable via ssh. Will retry", host, cmd)
+
         max_retry -= 1
         time.sleep(1)
-        logger.warning("Retry SSH:%s: %r. Err is %r", host, cmd, exc.output)
 
 
 def get_sshable_hosts(addrs: Iterable[str], ssh_opts: str, thcount: int = 32) -> List[str]:
