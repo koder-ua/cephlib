@@ -390,7 +390,7 @@ def get_ram_size():
 @provides("perprocess-ram")
 class ProcRamSensor(ArraysSensor):
     def collect(self):
-        # TODO(koder): fixed list of PID's nust be given
+        # TODO(koder): fixed list of PID's must be given
         for pid in get_pid_list(self.disallowed, self.allowed):
             try:
                 dev_name = get_pid_name(pid)
@@ -498,17 +498,16 @@ class SystemRAMSensor(ArraysSensor):
                 self.add_data("ram", field, int(vals[1]))
 
 
-def get_val(dct, path):
-    if '/' in path:
-        root, next = path.split('/', 1)
-        return get_val(dct[root], next)
-    return dct[path]
+# --------------   historic ops ----------------------------------------------------------------------------------------
+
+class CephOpTypes:
+    reply = "osd_repop_reply"
+    op = "osd_op"
+    repop = "osd_repop"
 
 
 class CephOp:
-    descriptions = ["osd_repop_reply", "osd_op", "osd_repop"]
-    basic_stages = [
-        "initiated",
+    fixed_stages = [
         "queued_for_pg",
         "reached_pg",
         "started",
@@ -524,66 +523,66 @@ class CephOp:
         "done"
     ]
 
+    init_stage = "initiated"
     waiting_stage_lname = "waiting for subops from"
     waiting_stage = "waiting_for_subops"
     sub_op_commit = "sub_op_commit_rec"
     sub_op_applied = "sub_op_applied_rec"
 
-    all_stages = basic_stages + [sub_op_commit, sub_op_applied]
+    all_stages = fixed_stages + [sub_op_commit, sub_op_applied, init_stage]
 
-    def __init__(self, age, descr_idx, duration, initiated_at, status, stages, sub_op_commit, sub_op_applied):
-        self.age = age  # ???
-        self.descr_idx = descr_idx  # type index from CephOp.descriptions
-        self.duration = duration  # total time
-        self.initiated_at = initiated_at  # ctime of operation initiation
-        self.status = status  # current status
-        self.stages = stages  # list of times, when particular op from CephOp.basic_stages started
-        self.sub_op_commit = sub_op_commit  # list of times for CephOp.extra1_name events type
-        self.sub_op_applied = sub_op_applied  # list of times for CephOp.extra2_name events type
+    I_size = struct.calcsize("I")
+    Q_size = struct.calcsize("Q")
 
+    def __init__(self, pg_id, obj_id, init_at, timings, timings_list=None):
+        self.pg_id = pg_id
+        self.obj_id = obj_id
+        self.init_at = init_at
 
-STAGE_TIME_FORMAT = 'I'
-STAGE_TIME_FORMAT_SZ = struct.calcsize(STAGE_TIME_FORMAT)
-MAX_STAGE_TIME = 2 ** 32 - 1
+        if timings_list:
+            assert timings is None
+            timings_list = list(timings_list)
+            self.times = timings_list[:len(self.fixed_stages)]
+            self.commit_times = timings_list[len(self.fixed_stages):]
+        else:
+            self.times = [0] * len(self.fixed_stages)
+            self.commit_times = []
+            for name, stime in timings.items():
+                try:
+                    self.times[self.fixed_stages.index(name)] = stime
+                except ValueError:
+                    if name.startswith(self.waiting_stage):
+                        pass
+                    elif name.startswith(self.sub_op_commit):
+                        self.commit_times.append(stime)
 
-ceph_op_format = "!BfBfL" + STAGE_TIME_FORMAT * len(CephOp.basic_stages)
-OP_SIZE = struct.calcsize(ceph_op_format)
-VERSION = 1
-BOR = b'EF34'
-EOR = b'AB12'
-assert struct.calcsize('!B') == 1
+    def pack(self):
+        all_data = self.times + self.commit_times
+        assert all(i < (1 << 32) for i in all_data)
+        all_data.insert(0, len(all_data))
+        return ("{0.pg_id}\x00{0.obj_id}\x00".format(self)).encode("utf8") + \
+            struct.pack("!Q", self.init_at) + struct.pack("!" + "I" * len(all_data), *all_data)
 
+    @classmethod
+    def unpack(cls, data, offset):
+        zoffset = data.index(b"\x00", offset)
+        pg_id = data[offset: zoffset]
+        offset = zoffset + 1
 
-def pack_ceph_op(op):
-    extra = struct.pack("!B" + STAGE_TIME_FORMAT * len(op.extra1), len(op.extra1), *op.extra1)
-    extra += struct.pack("!B" + STAGE_TIME_FORMAT * len(op.extra2), len(op.extra2), *op.extra2)
-    dt = struct.pack(ceph_op_format, VERSION, op.age, op.descr_idx, op.duration,
-                     op.initiated_at / 1000000,
-                     *[(0 if tm is None else tm) for tm in op.stages]) + extra
-    return BOR + dt + EOR
+        zoffset = data.index(b"\x00", offset)
+        obj_id = data[offset: zoffset]
+        offset = zoffset + 1
 
+        init_at, timings_sz = struct.unpack(">QI", data[offset: offset + cls.I_size + cls.Q_size])
+        offset += cls.I_size + cls.Q_size
+        eoffset = offset + cls.I_size * timings_sz
+        timings = struct.unpack(">" + "I" * timings_sz, data[offset: eoffset])
+        return cls(pg_id.decode("utf8"), obj_id.decode("utf8"), init_at, None, timings_list=timings), eoffset
 
-def unpack_ceph_op(stream):
-    assert BOR == stream.read(len(BOR))
-    vls = struct.unpack(ceph_op_format, stream.read(OP_SIZE))
-    version, age, descr_idx, duration, init_at = vls[:5]
-    stages = list(vls[5:])
-    assert version == VERSION
-
-    sz1 = ord(stream.read(1))
-    if sz1:
-        extra_stages1 = list(struct.unpack("!" + STAGE_TIME_FORMAT * sz1, stream.read(STAGE_TIME_FORMAT_SZ * sz1)))
-    else:
-        extra_stages1 = []
-
-    sz2 = ord(stream.read(1))
-    if sz2:
-        extra_stages2 = list(struct.unpack("!" + STAGE_TIME_FORMAT * sz2, stream.read(STAGE_TIME_FORMAT_SZ * sz2)))
-    else:
-        extra_stages2 = []
-
-    assert EOR == stream.read(len(EOR))
-    return CephOp(age, descr_idx, duration, init_at * 1000000, None, stages, extra_stages1, extra_stages2)
+    def iter_events(self):
+        all_paris = list(zip(self.fixed_stages, self.times)) +  [(self.sub_op_commit, tm) for tm in self.commit_times]
+        nz_pairs = [(name, val) for name, val in all_paris if val != 0]
+        return sorted(nz_pairs, key=lambda x: x[1])
 
 
 def to_ctime_mks(time_str):
@@ -592,49 +591,36 @@ def to_ctime_mks(time_str):
     return int(time.mktime(dt) * 1000000 + int(micro_sec))
 
 
-LN_FORMAT = '!I'
-LN_FORMAT_SZ = struct.calcsize(LN_FORMAT)
+def parse_op(op):
+    descr = op['description']
+    if not descr.startswith(CephOpTypes.op + '('):
+        return
+
+    _, pg_id, obj_id, rest = descr.split(" ", 3)
+    assert rest.startswith("[")
+
+    events_iter = iter(op["type_data"]['events'])
+    fitem = next(events_iter)
+    assert fitem['event'] == "initiated"
+    init_time = to_ctime_mks(fitem['time'])
+
+    timings = {evt['event']: (to_ctime_mks(evt['time']) - init_time) for evt in events_iter}
+    assert all(i >= 0 for i in timings)
+    return CephOp(pg_id, obj_id, init_time, timings)
 
 
-def merge_strings(strs):
-    res = ""
-    for string in strs:
-        res += struct.pack(LN_FORMAT, len(string)) + string
-    return res
+def merge_strings(vals):
+    return "".join((struct.pack(">I", len(vl)) + vl) for vl in vals)
 
 
-def unmerge_strings(blob):
+def unmerge_strings(data):
     offset = 0
-    while offset < len(blob):
-        ln, = struct.unpack(LN_FORMAT, blob[offset: offset + LN_FORMAT_SZ])
-        yield blob[offset + LN_FORMAT_SZ: offset + LN_FORMAT_SZ + ln]
-        offset += LN_FORMAT_SZ + ln
-
-
-def parse_ops_timings(ops_list, op_type, expected_evts):
-    for opl in ops_list:
-        for op in opl:
-            if op['description'].split("(", 1)[0] == op_type:
-                names = []
-                times = []
-                sub_op_idx = 0
-                for evt in op["type_data"][-1]:
-                    nm = evt['event']
-                    times.append(to_ctime_mks(evt['time']))
-                    if nm not in CephOp.basic_stages:
-                        if nm.startswith(CephOp.waiting_stage_lname):
-                            nm = CephOp.waiting_stage
-                        elif nm.startswith(CephOp.sub_op_commit):
-                            nm = CephOp.sub_op_commit + '_' + str(sub_op_idx)
-                            sub_op_idx += 1
-                        else:
-                            break
-                    names.append(nm)
-                else:
-                    assert names[0] == 'initiated', str(names)
-                    times = [tm - times[0] for tm in times]
-                    if sorted(names) == expected_evts:
-                        yield dict(zip(names, times))
+    I_size = struct.calcsize("I")
+    while offset < len(data):
+        next_sz, = struct.unpack(">I", data[offset: offset + I_size])
+        offset += I_size
+        yield data[offset: offset + next_sz]
+        offset += next_sz
 
 
 @provides("ceph")
@@ -650,7 +636,6 @@ class CephSensor(ArraysSensor):
 
         sources = self.params.get('sources', [])
         self.historic = {} if 'historic' in sources else None
-        self.historic_js = {} if 'historic_js' in sources else None
         self.perf_dump = {} if 'perf_dump' in sources else None
 
         self.prev_historic = set()
@@ -678,160 +663,79 @@ class CephSensor(ArraysSensor):
         return res
 
     def collect(self):
-        for osd_id in self.osd_ids:
-            if self.historic_js is not None or self.historic is not None:
-                ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
+        if self.historic is None and self.perf_dump is None:
+            return
 
+        for osd_id in self.osd_ids:
+            if self.historic is not None:
+                ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
                 # filter ops, which was in previous set
+
                 curr = set()
-                ops = []
                 hops = json.loads(ops_json)
+                new_ops = []
                 for op in (hops['Ops'] if 'Ops' in hops else hops['ops']):
                     curr.add(op['description'])
                     if op['description'] not in self.prev_historic:
-                        ops.append(op)
-                self.prev_historic = curr
-
-                if not ops:
-                    continue
-
-                if self.historic_js is not None:
-                    ops_json_z = zlib.compress(json.dumps(ops, indent=1))
-                    self.historic_js.setdefault(osd_id, []).append(ops_json_z)
-
-                if self.historic:
-                    new_ops = []
-                    hops = json.loads(ops_json)
-                    for op in (hops['Ops'] if 'Ops' in hops else hops['ops']):
-                        curr.add(op['description'])
-                        if op['description'] in self.prev_historic:
-                            continue
-                        op_obj = self.parse_op(op)
+                        op_obj = parse_op(op)
                         if op_obj:
                             new_ops.append(op_obj)
-
-                    data = "".join(pack_ceph_op(op_obj) for op_obj in new_ops)
-                    data_z = zlib.compress(data)
-                    self.historic.setdefault(osd_id, []).append(data_z)
-
-                    self.prev_historic = curr
-
-            if 'in_flight' in self.params.get('sources', []):
-                raise NotImplementedError()
+                self.prev_historic = curr
+                if osd_id not in self.historic:
+                    self.historic[osd_id] = b""
+                self.historic[osd_id] += b"".join(op_obj.pack() for op_obj in new_ops)
 
             if self.perf_dump is not None:
-                data = self.run_ceph_daemon_cmd(osd_id, 'perf dump')
-                data_z = zlib.compress(data)
-                self.perf_dump.setdefault(osd_id, []).append(data_z)
-
+                self.perf_dump.setdefault(osd_id, []).append(self.run_ceph_daemon_cmd(osd_id, 'perf dump'))
 
     def set_osd_historic(self, duration, keep, osd_id):
         data = json.loads(self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops"))
         self.run_ceph_daemon_cmd(osd_id, "config set osd_op_history_duration {}".format(duration))
         self.run_ceph_daemon_cmd(osd_id, "config set osd_op_history_size {}".format(keep))
-        return (data["duration to keep"], data["num to keep"])
-
-    @classmethod
-    def parse_op(cls, op):
-        raise NotImplementedError("Need update, accordingly to changes in CephOp")
-        descr = op['description']
-        if descr.startswith('osd_repop('):
-            # slave op
-            assert len(op['type_data']) == 2
-            tp, steps = op['type_data']
-        elif descr.startswith('osd_op('):
-            # master op
-            assert len(op['type_data']) == 3
-            tp, _, steps = op['type_data']
-        elif descr.startswith('osd_repop_reply('):
-            # ?????
-            assert len(op['type_data']) == 2
-            tp, steps = op['type_data']
-        else:
-            logger.warning("Can't parse op %r\n%r", descr, op)
-            return None
-            # raise ValueError("Can't parse op {0!r}".format(descr))
-
-        step_timings = [None] * len(ALL_STAGES)
-        extra1 = []
-        extra2 = []
-        initiated_at = to_ctime_ms(op['initiated_at'])
-        assert steps[0]['event'] == 'initiated'
-
-        for step in steps[1:]:
-            name = step['event']
-            tm = to_ctime_ms(step['time']) - initiated_at
-
-            if tm > MAX_STAGE_TIME:
-                tm = MAX_STAGE_TIME
-
-            if name.startswith(waiting_subop):
-                name = 'waiting_for_subop'
-
-            try:
-                step_timings[ALL_STAGES.index(name)] = tm
-            except ValueError:
-                if name.startswith(sub_op_commit):
-                    extra1.append(tm)
-                elif name.startswith(sub_op_applied):
-                    extra2.append(tm)
-                else:
-                    pass
-                    # raise ValueError("Unknown stage type {0!r}".format(name))
-        return CephOp(age=op['age'],
-                      descr_idx=CEPH_OP_DESCR_IDX[descr.split("(", 1)[0]],
-                      duration=op['duration'],
-                      initiated_at=initiated_at,
-                      status=tp,
-                      stages=step_timings,
-                      extra1=extra1,
-                      extra2=extra2)
+        try:
+            return (data["duration to keep"], data["num to keep"])
+        except KeyError:
+            # in luminous key was changed
+            return (data["duration"], data["size"])
 
     def stop(self):
         for osd_id, (duration, keep) in self.prev_vals.items():
             self.prev_vals[osd_id] = self.set_osd_historic(duration, keep, osd_id)
 
     def get_updates(self):
+        logger.info("ceph get updates called")
         res = super(CephSensor, self).get_updates()
 
         if self.historic:
             for osd_id, packed_ops in self.historic.items():
-                res[("osd{0}".format(osd_id), "historic")] = (None, merge_strings(packed_ops))
+                res[("osd{0}".format(osd_id), "historic")] = (None, packed_ops)
             self.historic = {}
 
-        if self.historic_js:
-            for osd_id, ops in self.historic_js.items():
-                res[("osd{0}".format(osd_id), "historic_js")] = (None, merge_strings(ops))
-            self.historic_js = {}
-
         if self.perf_dump:
-            for osd_id, ops in self.perf_dump.items():
-                res[("osd{0}".format(osd_id), "perf_dump")] = (None, merge_strings(ops))
+            for osd_id, perf_info in self.perf_dump.items():
+                res[("osd{0}".format(osd_id), "perf_dump")] = (None, merge_strings(perf_info))
             self.perf_dump = {}
 
+        logger.info("Return updates %s", len(res))
         return res
 
     @classmethod
-    def unpack_historic(cls, packed):
-        return cls.unpack_historic_fd(BIO(packed), len(packed))
-
-    @classmethod
-    def unpack_historic_fd(cls, fd, size):
-        while fd.tell() < size:
-            yield unpack_ceph_op(fd)
+    def unpack_historic(cls, data):
+        offset = 0
+        while offset < len(data):
+            op, offset = CephOp.unpack(data, offset)
+            yield op
 
     @classmethod
     def unpack_results(cls, device, metric, packed_z, typecode):
         raise NotImplementedError()
 
     @staticmethod
-    def split_results(metric, packed_z):
-        packed = (zlib.decompress(chunk) for chunk in unmerge_strings(packed_z))
+    def split_results(metric, data):
         if metric == 'historic':
-            if IS_PYTHON3:
-                return b"".join(packed)
-            return "".join(packed)
-        elif metric in ('historic_js', 'perf_dump'):
+            return data
+        elif metric == 'perf_dump':
+            packed = unmerge_strings(data)
             if IS_PYTHON3:
                 return ("[" + ",\n".join(chunk.decode('utf8').strip() for chunk in packed) + "]").encode('utf8')
             return "[" + ",\n".join(chunk.strip() for chunk in packed) + "]"
@@ -984,7 +888,7 @@ def unpack_rpc_updates(res_tuple):
         sensor_path = sensor_path.decode("utf8")
         sensor_name, device, metric = sensor_path.split('.', 2)
         units = sensor_units.get("{0}.{1}".format(sensor_name, metric), "")
-        if sensor_name == 'ceph' and metric in {'historic', 'historic_js', 'perf_dump'}:
+        if sensor_name == 'ceph' and metric in {'historic', 'perf_dump'}:
             yield sensor_path, CephSensor.split_results(metric, blob[offset:offset + size]), False, units
         else:
             sensor_data = SensorsMap[sensor_name].unpack_results(device,

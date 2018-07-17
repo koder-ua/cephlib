@@ -42,6 +42,9 @@ class WallyDB:
     run_interval = 'run_interval.yml'
     resource_usage_rel = 'resource_usage'
     res_code = 'result_code.yml'
+    pgs_io = 'sensors/ceph.pgs_dump.{time}.bz2'
+    pools_io = 'sensors/ceph.pools_df.{time}.bz2'
+    ceph_metric = 'sensors/ceph.{node_id}.{metric}.{time}.{tag}'
 
 
 def find_nodes_by_roles(storage: IStorage, roles: List[str]) -> List[str]:

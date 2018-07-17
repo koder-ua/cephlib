@@ -18,7 +18,7 @@ from .common import to_ip, Timeout
 from .storage import IStorable
 
 
-logger = logging.getLogger("wally")
+logger = logging.getLogger("cephlib")
 
 
 IP = str
@@ -26,7 +26,7 @@ IPAddr = NamedTuple("IPAddr", [("host", IP), ("port", int)])
 
 
 class ConnCreds(IStorable):
-    def __init__(self, host: str, user: str, passwd: str = None, port: str = '22',
+    def __init__(self, host: str, user: str = None, passwd: str = None, port: str = '22',
                  key_file: str = None, key: bytes = None) -> None:
         self.user = user
         self.passwd = passwd

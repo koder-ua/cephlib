@@ -9,14 +9,20 @@ logger = logging.getLogger("cephlib")
 
 
 class OSDInfo:
-    def __init__(self, id: int, journal: str, storage: str, config: str) -> None:
+    def __init__(self, id: int, journal: str, storage: str, config: str, db: str = None,
+                 bluestore: bool = None) -> None:
         self.id = id
         self.journal = journal
         self.storage = storage
         self.config = config
+        self.db = db
+        self.bluestore = bluestore
 
     def __str__(self) -> str:
-        return "OSDInfo({0.id!r}):\n    journal: {0.journal!r}\n    storage: {0.storage!r}".format(self)
+        res = "OSDInfo({0.id!r}):\n    journal: {0.journal!r}\n    storage: {0.storage!r}".format(self)
+        if self.db:
+            res += "\n    db: {0.db}".format(self)
+        return res
 
 
 def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: str) -> str:

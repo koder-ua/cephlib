@@ -485,6 +485,9 @@ class AttredStorage:
     def __iter__(self) -> Iterator[Tuple[bool, str]]:
         return iter(self.__storage.list("."))
 
+    def __contains__(self, value) -> bool:
+        return value in self.__storage
+
     def get(self, path: str, default: Any = None, ext: str = _Def) -> Any:
         try:
             return self.__load(path, self.__ext if ext is _Def else ext, dir_allowed=False)[1]

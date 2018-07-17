@@ -274,8 +274,8 @@ def get_os(node: IRPCNode) -> OSRelease:
     """return os type, release and architecture for node.
     """
     arch = node.run("arch", nolog=True).strip()
-    dist_type = node.run("lsb_release -i -s", nolog=True).lower()
-    codename = node.run("lsb_release -c -s", nolog=True).lower()
+    dist_type = node.run("lsb_release -i -s", nolog=True).lower().strip()
+    codename = node.run("lsb_release -c -s", nolog=True).lower().strip()
     return OSRelease(dist_type, codename, arch)
 
 

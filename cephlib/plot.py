@@ -138,8 +138,6 @@ def do_plot_hmap_with_histo(fig: Figure,
 
     gs = gridspec.GridSpec(1, 10)
     ax = fig.add_subplot(gs[0, :6])
-    # ax = fig.add_axes([0.1, 0.1, 0.5, 0.8])
-
     seaborn.heatmap(heatmap[:,::-1].T, xticklabels=False, cmap=cmap, ax=ax, cbar=cbar)
     ax.axhline(linewidth=1, color="b")
 
@@ -154,7 +152,7 @@ def do_plot_hmap_with_histo(fig: Figure,
 
     ax.yaxis.tick_right()
     ax.yaxis.set_major_locator(ticker.FixedLocator(label_locs))
-    ax.set_yticklabels(labels, rotation='horizontal')
+    ax.set_yticklabels(labels[::-1], rotation='horizontal')
 
     ax2 = fig.add_subplot(gs[0, 7:])
     ax2.set_yticklabels([])

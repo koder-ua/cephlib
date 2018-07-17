@@ -263,7 +263,8 @@ def setup_rpc(node: ISSHHost,
               rpc_server_code: bytes,
               plugins: Dict[str, bytes] = None,
               port: int = 0,
-              log_level: str = None) -> IRPCNode:
+              log_level: str = None,
+              sudo: bool = False) -> IRPCNode:
 
     logger.debug("Setting up RPC connection to {}".format(node.info))
     python_cmd = get_node_python_27(node)
@@ -287,6 +288,9 @@ def setup_rpc(node: ISSHHost,
     else:
         cmd = "{} {} --log-level=CRITICAL server --listen-addr={}:{} --daemon --show-settings"
         cmd = cmd.format(python_cmd, code_file, ip, port)
+
+    if sudo:
+        cmd = "sudo {}".format(cmd)
 
     params_js = node.run(cmd).strip()
     params = json.loads(params_js)
