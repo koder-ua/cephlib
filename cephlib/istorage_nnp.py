@@ -156,10 +156,6 @@ class IStorageNNP(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def sub_storage(self, *path: str) -> 'IStorageNNP':
-        pass
-
-    @abc.abstractmethod
     def put(self, value: Any, *path: str) -> None:
         pass
 

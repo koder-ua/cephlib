@@ -86,7 +86,6 @@ def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
 
 def get_mons_nodes(check_output: Callable[[str], str], extra_args: str = "") -> Dict[int, Tuple[str, str]]:
     """Return mapping mon_id => mon_ip"""
-
     data = check_output("ceph {0} --format json mon_status".format(extra_args))
     jdata = json.loads(data)
     ips = {}

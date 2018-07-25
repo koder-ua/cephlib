@@ -1,4 +1,4 @@
-from typing import cast, Union, Tuple
+from typing import cast, Union, Tuple, TypeVar, List, Callable
 from fractions import Fraction
 
 

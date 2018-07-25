@@ -355,7 +355,8 @@ def get_ip_for_target(target_ip: str) -> str:
     if first_dig == 127:
         return '127.0.0.1'
 
-    data = run_locally('ip route get to'.split(" ") + [target_ip])
+    data = run_locally('ip route get to'.split(" ") + [target_ip]).decode("utf8")
+    data_line = data.split("\n")[0].strip()
 
     rr1 = r'{0} via [.0-9]+ dev (?P<dev>.*?) src (?P<ip>[.0-9]+)$'
     rr1 = rr1.replace(" ", r'\s+')
@@ -365,7 +366,6 @@ def get_ip_for_target(target_ip: str) -> str:
     rr2 = rr2.replace(" ", r'\s+')
     rr2 = rr2.format(target_ip.replace('.', r'\.'))
 
-    data_line = data.split("\n")[0].strip()
     res1 = re.match(rr1, data_line)
     res2 = re.match(rr2, data_line)
 
@@ -440,3 +440,13 @@ def shape2str(shape: Iterable[int]) -> str:
 
 def str2shape(shape: str) -> Tuple[int, ...]:
     return tuple(map(int, shape.split('*')))
+
+
+Tp = TypeVar('Tp')
+
+
+def find(lst: List[Tp], check: Callable[[Tp], bool], default: Tp = None) -> Tp:
+    for obj in lst:
+        if check(obj):
+            return obj
+    return default

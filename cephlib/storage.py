@@ -525,3 +525,14 @@ def make_storage(url, existing=False, serializer='safe'):
     fstor = FSStorage(url, existing)
     return Storage(fstor, serializer_map[serializer]())
 
+
+class TypedStorage:
+    def __init__(self, storage):
+        self.txt = make_attr_storage(storage.sstorage, 'txt')
+        self.json = make_attr_storage(storage.sstorage, 'json')
+        self.xml = make_attr_storage(storage.sstorage, 'xml')
+        self.raw = storage
+
+    def substorage(self, path):
+        return self.__class__(self.raw.substorage(path))
+
