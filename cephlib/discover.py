@@ -54,15 +54,16 @@ def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
         else:
             osd_ips[osd_id] = osd_data["public_addr"].split(":")[0]
 
-    def worker(osd_id: str) -> Tuple[str, Optional[str]]:
+    def worker(osd_id: str) -> Optional[str]:
         try:
-            return osd_id, get_osd_config(check_output, extra_args, osd_id)
+            return get_osd_config(check_output, extra_args, osd_id)
         except:
-            return osd_id, None
+            return None
 
     first_error = True
+    ids = list(osd_ips)
     with ThreadPoolExecutor(thcount) as pool:
-        for osd_id, osd_cfg in pool.map(worker, list(osd_ips.keys())):
+        for osd_id, osd_cfg in zip(ids, pool.map(worker, ids)):
             if osd_cfg is None:
                 if first_error:
                     logger.warning("Failed to get config for OSD {0}".format(osd_id))

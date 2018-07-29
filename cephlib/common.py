@@ -7,7 +7,6 @@ import socket
 import atexit
 import logging
 import tempfile
-import threading
 import ipaddress
 import subprocess
 import contextlib
@@ -45,19 +44,9 @@ def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: i
                             stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
-    res = []  # type: List[bytes]
-
-    def thread_func() -> None:
-        rr = proc.communicate(input_data)
-        res.extend(rr)
-
-    thread = threading.Thread(target=thread_func,
-                              name="Local cmd execution")
-    thread.daemon = True
-    thread.start()
-    thread.join(timeout)
-
-    if thread.is_alive():
+    try:
+        stdout_data, stderr_data = proc.communicate(input_data, timeout=timeout)
+    except TimeoutError:
         if psutil is not None:
             parent = psutil.Process(proc.pid)
             for child in parent.children(recursive=True):
@@ -65,11 +54,9 @@ def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: i
             parent.kill()
         else:
             proc.kill()
-
-        thread.join()
+        proc.wait(0.1)
         raise RuntimeError("Local process timeout: " + cmd_str)
 
-    stdout_data, stderr_data = res  # type: bytes, bytes
     if 0 != proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, cmd_str, stdout_data + stderr_data)
     return stdout_data + (stderr_data if merge_err else b'')
@@ -85,7 +72,7 @@ def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retr
     while True:
         try:
             return run_locally(ssh_cmd, input_data=input_data, timeout=timeout, log=False, merge_err=merge_err)
-        except subprocess.CalledProcessError as lexc:
+        except (subprocess.CalledProcessError, TimeoutError) as lexc:
             if max_retry == 0:
                 raise
             exc = lexc
