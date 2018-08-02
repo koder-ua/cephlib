@@ -642,10 +642,11 @@ class CephSensor(ArraysSensor):
 
         if self.params['osds'] == "all":
             self.osd_ids = []
-            for name in os.listdir('/var/lib/ceph/osd'):
-                rr = re.match(r"ceph-\d+", name)
-                if rr:
-                    self.osd_ids.append(name.split("-")[1])
+            if os.path.isdir('/var/lib/ceph/osd'):
+                for name in os.listdir('/var/lib/ceph/osd'):
+                    rr = re.match(r"ceph-\d+", name)
+                    if rr:
+                        self.osd_ids.append(name.split("-")[1])
         else:
             self.osd_ids = self.params['osds'][:]
 
