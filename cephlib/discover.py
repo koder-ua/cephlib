@@ -1,5 +1,6 @@
 """ Collect data about ceph nodes"""
 import json
+import random
 import logging
 from typing import Callable, Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +63,7 @@ def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
 
     first_error = True
     ids = list(osd_ips)
+    random.shuffle(ids)
     with ThreadPoolExecutor(thcount) as pool:
         for osd_id, osd_cfg in zip(ids, pool.map(worker, ids)):
             if osd_cfg is None:
