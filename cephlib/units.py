@@ -65,11 +65,11 @@ def b2ssize(value: Union[int, float]) -> str:
 
 
 def has_next_digit_after_coma(x: float) -> bool:
-    return x * 10 - int(x * 10) > 1
+    return int(x * 10) - int(x) * 10 != 0
 
 
 def has_second_digit_after_coma(x: float) -> bool:
-    return (x * 10 - int(x * 10)) * 10 > 1
+    return int(x * 100) - int(x * 10) * 10 != 0
 
 
 def b2ssize_10(value: Union[int, float]) -> str:
@@ -88,21 +88,21 @@ def b2ssize_10(value: Union[int, float]) -> str:
         if cval < 1000:
             # detect how many digits after dot to show
             if cval > 100:
-                return "{}{}".format(int(cval), name)
+                return "{} {}".format(int(cval), name)
             if cval > 10:
                 if has_next_digit_after_coma(cval):
-                    return "{:.1f}{}".format(cval, name)
+                    return "{:.1f} {}".format(cval, name)
                 else:
-                    return "{}{}".format(int(cval), name)
+                    return "{} {}".format(int(cval), name)
             if cval >= 1:
                 if has_second_digit_after_coma(cval):
-                    return "{:.2f}{}".format(cval, name)
+                    return "{:.2f} {}".format(cval, name)
                 elif has_next_digit_after_coma(cval):
-                    return "{:.1f}{}".format(cval, name)
-                return "{}{}".format(int(cval), name)
+                    return "{:.1f} {}".format(cval, name)
+                return "{} {}".format(int(cval), name)
             raise AssertionError("Can't get here")
 
-    return "{}{}".format(int(value // scale), name)
+    return "{} {}".format(int(value // scale), name)
 
 
 def split_unit(units: str) -> Tuple[Union[Fraction, int], str]:
