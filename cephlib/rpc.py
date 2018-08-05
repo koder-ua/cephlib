@@ -39,6 +39,7 @@ def init_node(node_name, ssh_opts, with_sudo=False):
             raise AssertionError("Failed to run python2.7 on node {0}".format(node_name))
 
         path = '/tmp/ceph_agent.py'
+        run_ssh(node_name, ssh_opts, ("sudo " if with_sudo else "") + "rm -f {0}".format(path))
         run_ssh(node_name, ssh_opts, "'cat > {0}'".format(path), input_data=agent_code.encode('utf8'))
 
         log_file = '/tmp/ceph_agent.log'
