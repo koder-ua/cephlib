@@ -1009,3 +1009,12 @@ def rpc_get_block_devs_info(filter_virtual=True):
                 open(sched_fl).read()
             )
     return res
+
+
+@noraise
+def rpc_find_issues_in_ceph_log(max_lines=10000):
+    errs_warns = []
+    for ln in open("/var/log/ceph/ceph.log"):
+        if 'cluster [ERR]' in ln or "cluster [WRN]" in ln:
+            errs_warns.append(ln)
+    return "".join(errs_warns[-max_lines:])
