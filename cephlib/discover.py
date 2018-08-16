@@ -30,10 +30,6 @@ def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: 
     return check_output("ceph {0} -n osd.{1} --show-config".format(extra_args, osd_id))
 
 
-def pmap():
-    pass
-
-
 def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
                    thcount: int = 1) -> Dict[str, List[OSDInfo]]:
     """Get dict, which maps node ip to list of OSDInfo"""

@@ -5,7 +5,7 @@ import socket
 import logging
 import subprocess
 
-from .common import run_ssh, run_ssh
+from .common import run_ssh
 from . import sensors_rpc_plugin
 
 from agent.agent import connect

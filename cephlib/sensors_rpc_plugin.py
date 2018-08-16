@@ -1,14 +1,17 @@
 import re
 import os
 import sys
+import stat
 import json
 import time
 import zlib
 import array
+import errno
 import pprint
 import struct
 import os.path
 import logging
+import functools
 import threading
 import traceback
 import subprocess
@@ -53,7 +56,7 @@ class Sensor(object):
     def add_data(self, device, name, value):
         pass
 
-    def collect(self):
+    def collect(self, last=False):
         pass
 
     def get_updates(self):
@@ -212,7 +215,7 @@ class BlockIOSensor(ArraysSensor):
 
         self.collect(init_rel=True)
 
-    def collect(self, init_rel=False):
+    def collect(self, last=False, init_rel=False):
         for line in open('/proc/diskstats'):
             vals = line.split()
             dev_name = vals[2]
@@ -251,7 +254,7 @@ class VMIOSensor(ArraysSensor):
         else:
             self.conn = None
 
-    def collect(self, init_rel=False):
+    def collect(self, last=False, init_rel=False):
         if self.conn is None:
             return
 
@@ -312,7 +315,7 @@ class NetIOSensor(ArraysSensor):
         self.allowed_names.update(dev_name for is_phy, dev_name in get_interfaces() if is_phy)
         self.collect(init_rel=True)
 
-    def collect(self, init_rel=False):
+    def collect(self, last=False, init_rel=False):
         for line in open('/proc/net/dev').readlines()[2:]:
             dev_name, stats = line.split(":", 1)
             dev_name = dev_name.strip()
@@ -445,7 +448,7 @@ class SystemCPUSensor(ArraysSensor):
 
         self.collect(init_rel=True)
 
-    def collect(self, init_rel=False):
+    def collect(self, last=False, init_rel=False):
         # calculate core count
         core_count = 0
 
@@ -635,8 +638,12 @@ class CephSensor(ArraysSensor):
         self.prev_vals = {}
 
         sources = self.params.get('sources', [])
-        self.historic = {} if 'historic' in sources else None
-        self.perf_dump = {} if 'perf_dump' in sources else None
+        self.historic = {}
+        self.perf_dump = {}
+
+        self.collect_historic = 'historic' in sources
+        self.collect_perf = 'perf_dump' in sources
+        self.first = True
 
         self.prev_historic = set()
 
@@ -647,6 +654,7 @@ class CephSensor(ArraysSensor):
                     rr = re.match(r"ceph-\d+", name)
                     if rr:
                         self.osd_ids.append(name.split("-")[1])
+            logger.debug("Found %s OSD ids", self.osd_ids)
         else:
             self.osd_ids = self.params['osds'][:]
 
@@ -663,12 +671,12 @@ class CephSensor(ArraysSensor):
 
         return res
 
-    def collect(self):
-        if self.historic is None and self.perf_dump is None:
+    def collect(self, last=False):
+        if not self.collect_historic and not self.collect_perf:
             return
 
         for osd_id in self.osd_ids:
-            if self.historic is not None:
+            if self.collect_historic:
                 ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
                 # filter ops, which was in previous set
 
@@ -684,10 +692,12 @@ class CephSensor(ArraysSensor):
                 self.prev_historic = curr
                 if osd_id not in self.historic:
                     self.historic[osd_id] = b""
+                logger.debug("Collect historic: %s", len(new_ops))
                 self.historic[osd_id] += b"".join(op_obj.pack() for op_obj in new_ops)
 
-            if self.perf_dump is not None:
+            if self.collect_perf:
                 self.perf_dump.setdefault(osd_id, []).append(self.run_ceph_daemon_cmd(osd_id, 'perf dump'))
+                self.first = False
 
     def set_osd_historic(self, duration, keep, osd_id):
         data = json.loads(self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops"))
@@ -769,6 +779,27 @@ def collect(sensors_config):
     return curr
 
 
+def run_collectors(pool, sdata, last=False):
+    ctm = time.time()
+    sdata.collected_at.append(int(ctm * 1000))
+    if pool is not None:
+
+        def caller(x):
+            return x()
+
+        funcs = [functools.partial(sensor.collect, last=last) for sensor in sdata.sensors.values()]
+        for msg, tb, exc_cls_name in pool.map(caller, funcs):
+            if tb:
+                sdata.promoted_exc = Promote(msg, tb, exc_cls_name)
+                break
+    else:
+        for sensor in sdata.sensors.values():
+            sensor.collect()
+
+    etm = time.time()
+    sdata.collected_at.append(int(etm * 1000))
+
+
 def sensors_bg_thread(sensors_config, sdata, collect_tout=1.0):
     try:
         sensors_config = sensors_config.copy()
@@ -803,24 +834,11 @@ def sensors_bg_thread(sensors_config, sdata, collect_tout=1.0):
             if sdata.stop:
                 break
 
-            ctm = time.time()
             with sdata.cond:
-                sdata.collected_at.append(int(ctm * 1000))
-                if pool is not None:
+                run_collectors(pool, sdata)
 
-                    def caller(x):
-                        return x()
-
-                    for msg, tb, exc_cls_name in pool.map(caller, [sensor.collect for sensor in sdata.sensors.values()]):
-                        if tb:
-                            sdata.promoted_exc = Promote(msg, tb, exc_cls_name)
-                            break
-                else:
-                    for sensor in sdata.sensors.values():
-                        sensor.collect()
-
-                etm = time.time()
-                sdata.collected_at.append(int(etm * 1000))
+        with sdata.cond:
+            run_collectors(pool, sdata, True)
 
     except Exception as exc:
         logger.exception("In sensor BG thread")
@@ -1018,3 +1036,17 @@ def rpc_find_issues_in_ceph_log(max_lines=10000):
         if 'cluster [ERR]' in ln or "cluster [WRN]" in ln:
             errs_warns.append(ln)
     return "".join(errs_warns[-max_lines:])
+
+
+@noraise
+def rpc_count_sockets_for_process(pid):
+    count = 0
+    for fd in os.listdir('/proc/{0}/fd'.format(pid)):
+        try:
+            if stat.S_ISSOCK(os.stat('/proc/{0}/fd/{1}'.format(pid, fd)).st_mode):
+                count += 1
+        except OSError as exc:
+            if exc.errno != errno.ENOENT:
+                raise
+
+    return count
