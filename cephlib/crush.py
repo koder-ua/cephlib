@@ -133,6 +133,28 @@ class Crush:
             raise IndexError("Found {0} nodes  for path {1!r} (should be only 1)".format(len(nodes), path))
         return nodes[0]
 
+    def copy_tree_for_rule(self, rule: Rule) -> Optional[Node]:
+        return copy_class_subtree(self.get_root(rule.root), rule.class_name)
+
+
+def copy_class_subtree(src_node: Node, classname: str = None) -> Optional[Node]:
+    childs = []
+    for ch in src_node.childs:
+        if ch.type == 'osd' and (ch.class_name != classname and classname is not None):
+            continue
+        ch_copy = copy_class_subtree(ch, classname)
+        if ch_copy:
+            childs.append(ch_copy)
+
+    weight = sum((ch.weight for ch in childs), 0) if childs else src_node.weight
+    if (src_node.type == 'osd' or childs) and weight != 0:
+        return Node(id=src_node.id,
+                    name=src_node.name,
+                    type=src_node.type,
+                    class_name=src_node.class_name,
+                    weight=weight,
+                    childs=childs)
+
 
 def crush_prep_line(line):
     if "#" in line:

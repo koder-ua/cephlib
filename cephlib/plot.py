@@ -109,10 +109,13 @@ def process_heatmap_data(values: numpy.ndarray,
 
 
 def plot_histo(ax: Axes, vals: array1d, bins: array1d = None, kde: bool = False,
-               left: float = None, right: float = None):
+               left: float = None, right: float = None,
+               xlabel: str = None, y_ticks: bool = False):
     assert len(vals.shape) == 1
-    seaborn.distplot(vals, bins=bins, ax=ax, kde=kde)
-    ax.set_yticklabels([])
+    seaborn.distplot(vals, bins=bins, ax=ax, kde=kde, axlabel=xlabel)
+
+    if not y_ticks:
+        ax.set_yticklabels([])
 
     if left is not None or right is not None:
         ax.set_xlim(left=left, right=right)

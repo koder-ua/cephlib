@@ -5,12 +5,15 @@ import stat
 import json
 import time
 import zlib
+import glob
+import gzip
 import array
 import errno
 import pprint
 import struct
 import os.path
 import logging
+import datetime
 import functools
 import threading
 import traceback
@@ -649,11 +652,11 @@ class CephSensor(ArraysSensor):
 
         if self.params['osds'] == "all":
             self.osd_ids = []
-            if os.path.isdir('/var/lib/ceph/osd'):
-                for name in os.listdir('/var/lib/ceph/osd'):
-                    rr = re.match(r"ceph-\d+", name)
+            if os.path.isdir('/var/run/ceph'):
+                for name in os.listdir('/var/run/ceph'):
+                    rr = re.match(r"ceph-osd.(\d+).asok", name)
                     if rr:
-                        self.osd_ids.append(name.split("-")[1])
+                        self.osd_ids.append(rr.group(1))
             logger.debug("Found %s OSD ids", self.osd_ids)
         else:
             self.osd_ids = self.params['osds'][:]
@@ -677,7 +680,11 @@ class CephSensor(ArraysSensor):
 
         for osd_id in self.osd_ids:
             if self.collect_historic:
-                ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
+                try:
+                    ops_json = self.run_ceph_daemon_cmd(osd_id, "dump_historic_ops").strip()
+                except RuntimeError:
+                    continue
+
                 # filter ops, which was in previous set
 
                 curr = set()
@@ -1050,3 +1057,95 @@ def rpc_count_sockets_for_process(pid):
                 raise
 
     return count
+
+
+def iter_ceph_logs_fd():
+    for name in glob.glob("/var/log/ceph/ceph.log*"):
+        if name == 'ceph.log':
+            yield open(name, 'r')
+        elif re.match(r"/var/log/ceph/ceph\.log\.\d+\.gz$", name):
+            yield gzip.open(name)
+
+
+HEALTH_OK = 0
+SCRUB_MISSMATCH = 1
+CLOCK_SKEW = 2
+OSD_DOWN = 3
+REDUCED_AVAIL = 4
+DEGRADED = 5
+NO_ACTIVE_MGR = 6
+SLOW_REQUESTS = 7
+MON_ELECTION = 8
+
+
+def iter_log_messages(fd):
+    for ln in fd:
+        msg = None
+        dt, tm, service_name, service_id, addr, uid, _, src, level, message = ln.split(" ", 9)
+        if 'overall HEALTH_OK' in message or 'Cluster is now healthy' in message:
+            msg = HEALTH_OK
+        elif message == 'scrub mismatch':
+            msg = SCRUB_MISSMATCH
+        elif 'clock skew' in message:
+            msg = CLOCK_SKEW
+        elif 'marked down' in message:
+            msg = OSD_DOWN
+        elif 'Reduced data availability' in message:
+            msg = REDUCED_AVAIL
+        elif 'Degraded data redundancy' in message:
+            msg = DEGRADED
+        elif 'no active mgr' in message:
+            msg = NO_ACTIVE_MGR
+        elif "slow requests" in message and "included below" in message:
+            msg = SLOW_REQUESTS
+        elif 'calling monitor election' in message:
+            msg = MON_ELECTION
+
+        if msg is not None:
+            date = datetime.datetime.strptime(dt + " " + tm.split('.')[0], "%Y-%m-%d %H:%M:%S")
+            yield time.mktime(date.timetuple()), msg
+
+
+@noraise
+def rpc_analyze_ceph_logs_for_issues():
+    error_per_type = collections.Counter()
+    status_ranges = []
+    currently_healthy = None
+    region_started_at = None
+
+    max_records = 10000
+
+    def sorted_parts():
+        all_messages = []
+        for fd in iter_ceph_logs_fd():
+            for message in iter_log_messages(fd):
+                all_messages.append(message)
+                if len(all_messages) > max_records:
+                    all_messages.sort()
+                    yield all_messages[:max_records // 2]
+                    del all_messages[:max_records // 2]
+        yield all_messages
+
+    utc = None
+    for all_messages in sorted_parts():
+        for utc, mess_id in all_messages:
+            if region_started_at is None:
+                region_started_at = utc
+                currently_healthy = mess_id == HEALTH_OK
+                continue
+
+            if mess_id != HEALTH_OK:
+                error_per_type[mess_id] += 1
+                if currently_healthy:
+                    status_ranges.append((True, region_started_at, utc))
+                    region_started_at = utc
+                    currently_healthy = False
+            elif not currently_healthy:
+                status_ranges.append((False, region_started_at, utc))
+                region_started_at = utc
+                currently_healthy = True
+
+    if utc and utc != region_started_at:
+        status_ranges.append((currently_healthy, region_started_at, utc))
+
+    return dict(error_per_type.items()), status_ranges

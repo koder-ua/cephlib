@@ -486,7 +486,7 @@ class AttredStorage:
         return iter(self.__storage.list("."))
 
     def __contains__(self, value) -> bool:
-        return value in self.__storage
+        return value in self.__storage or (value + "." + self.__ext) in self.__storage
 
     def get(self, path: str, default: Any = None, ext: str = _Def) -> Any:
         try:
