@@ -1060,11 +1060,17 @@ def rpc_count_sockets_for_process(pid):
 
 
 def iter_ceph_logs_fd():
+    all_files = []
     for name in glob.glob("/var/log/ceph/ceph.log*"):
-        if name == 'ceph.log':
-            yield open(name, 'r')
-        elif re.match(r"/var/log/ceph/ceph\.log\.\d+\.gz$", name):
-            yield gzip.open(name)
+        if name == '/var/log/ceph/ceph.log':
+            all_files.append((0, open(name, 'r')))
+        else:
+            rr = re.match(r"/var/log/ceph/ceph\.log\.(\d+)\.gz$", name)
+            if rr:
+                all_files.append((-int(rr.group(1)), gzip.open(name)))
+
+    for _, fd in sorted(all_files):
+        yield fd
 
 
 HEALTH_OK = 0
@@ -1102,7 +1108,9 @@ def iter_log_messages(fd):
             msg = MON_ELECTION
 
         if msg is not None:
-            date = datetime.datetime.strptime(dt + " " + tm.split('.')[0], "%Y-%m-%d %H:%M:%S")
+            y_month_day = dt.split("-")
+            h_m_s = tm.split('.')[0].split(":")
+            date = datetime.datetime(*map(int, y_month_day + h_m_s))
             yield time.mktime(date.timetuple()), msg
 
 
