@@ -10,7 +10,10 @@ logger = logging.getLogger("cephlib")
 
 
 class OSDInfo:
-    def __init__(self, id: int, journal: str, storage: str, config: str, db: str = None,
+    def __init__(self, id: int, journal: Optional[str],
+                 storage: Optional[str],
+                 config: Optional[str],
+                 db: str = None,
                  bluestore: bool = None) -> None:
         self.id = id
         self.journal = journal
@@ -30,8 +33,10 @@ def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: 
     return check_output("ceph {0} -n osd.{1} --show-config".format(extra_args, osd_id))
 
 
-def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
-                   thcount: int = 1) -> Dict[str, List[OSDInfo]]:
+def get_osds_nodes(check_output: Callable[[str], str],
+                   extra_args: str = "",
+                   thcount: int = 1,
+                   get_config: bool = True) -> Dict[str, List[OSDInfo]]:
     """Get dict, which maps node ip to list of OSDInfo"""
 
     data = check_output("ceph {0} --format json osd dump".format(extra_args))
@@ -56,6 +61,13 @@ def get_osds_nodes(check_output: Callable[[str], str], extra_args: str = "",
             return get_osd_config(check_output, extra_args, osd_id)
         except:
             return None
+
+    if not get_config:
+        for osd_id, ip in osd_ips.items():
+            osd_infos.setdefault(ip, []).append(OSDInfo(osd_id, journal=None,
+                                                        storage=None,
+                                                        config=None))
+        return osd_infos
 
     first_error = True
     ids = list(osd_ips)
