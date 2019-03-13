@@ -1,5 +1,5 @@
 import re
-from typing import Iterator, Tuple, List, Optional, Dict, Union, Type
+from typing import Iterator, Tuple, List, Optional, Dict
 
 
 class Node:
@@ -212,7 +212,7 @@ def load_crushmap(filename: str = None, content: str = None) -> Crush:
     rule_re = re.compile(r"(?ms)\brule\s+(?P<name>[^\s]+)\s+{[^}]*?\b" +
                          r"id\s+(?P<id>\d+)\s+[^}]*\bstep\s+take\s+(?P<root>.+?)\s")
     class_re = re.compile(r"class\s+(?P<class_name>[^\s]+)")
-    step_take = re.compile(r"step\s+chooseleaf\s+firstn\s+0\s+type\s+(?P<bucket_type_name>[^\s]+)")
+    step_take = re.compile(r"step\s+chooseleaf\s+(firstn|indep)\s+0\s+type\s+(?P<bucket_type_name>[^\s]+)")
     nodes_map = {}
 
     if filename:
@@ -229,7 +229,7 @@ def load_crushmap(filename: str = None, content: str = None) -> Crush:
         class_name = None if class_rr is None else class_rr.group('class_name')
 
         step_take_rr = step_take.search(rest_of_rule)
-        assert step_take_rr
+        assert step_take_rr, rest_of_rule
 
         rules[rule_id] = Rule(name=rr.group('name'),
                               id=rule_id,

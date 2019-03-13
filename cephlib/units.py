@@ -41,6 +41,24 @@ def ssize2b(ssize: Union[str, int]) -> int:
         raise ValueError("Unknown size format {!r}".format(ssize))
 
 
+def to3digit(cval: float) -> str:
+    # detect how many digits after dot to show
+    if cval > 100:
+        return str(int(cval))
+    if cval > 10:
+        if has_next_digit_after_coma(cval):
+            return "{:.1f}".format(cval)
+        else:
+            return str(int(cval))
+    if cval >= 1:
+        if has_second_digit_after_coma(cval):
+            return "{:.2f}".format(cval)
+        elif has_next_digit_after_coma(cval):
+            return "{:.1f}".format(cval)
+        return str(int(cval))
+    raise AssertionError("Can't get here")
+
+
 def b2ssize(value: Union[int, float]) -> str:
     if isinstance(value, float) and value < 100:
         return b2ssize_10(value)
@@ -55,13 +73,9 @@ def b2ssize(value: Union[int, float]) -> str:
 
     for name, scale in RSMAP:
         if value < 1024 * scale:
-            if value % scale == 0:
-                return "{} {}".format(value // scale, name)
-            else:
-                return "{:.1f} {}".format(float(value) / scale, name)
+            return to3digit(float(value) / scale) + " " + name
 
-    return "{}{}i".format(value // scale, name)
-
+    return "{} {}i".format(value // scale, name)
 
 
 def has_next_digit_after_coma(x: float) -> bool:
@@ -86,22 +100,7 @@ def b2ssize_10(value: Union[int, float]) -> str:
     for name, scale in RSMAP_10:
         cval = value / scale
         if cval < 1000:
-            # detect how many digits after dot to show
-            if cval > 100:
-                return "{} {}".format(int(cval), name)
-            if cval > 10:
-                if has_next_digit_after_coma(cval):
-                    return "{:.1f} {}".format(cval, name)
-                else:
-                    return "{} {}".format(int(cval), name)
-            if cval >= 1:
-                if has_second_digit_after_coma(cval):
-                    return "{:.2f} {}".format(cval, name)
-                elif has_next_digit_after_coma(cval):
-                    return "{:.1f} {}".format(cval, name)
-                return "{} {}".format(int(cval), name)
-            raise AssertionError("Can't get here")
-
+            return to3digit(cval) + " " + name
     return "{} {}".format(int(value // scale), name)
 
 

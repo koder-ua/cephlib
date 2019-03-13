@@ -114,7 +114,7 @@ def c_interpolate_ts_on_seconds_border(ts: TimeSeries,
                                       coef,
                                       ridx.ctypes.data_as(uint64_p),
                                       no_data,
-                                      allow_broken_step)
+                                      True)
         if sz_or_err <= 0:
             raise ValueError("Error in input array at index {}. {}".format(-sz_or_err, ts.source))
         output_sz = sz_or_err

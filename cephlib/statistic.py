@@ -247,9 +247,11 @@ def calc_histo_stat_props(ts: TimeSeries,
 
     # minimax and maximal non-zero elements
     non_zero = numpy.nonzero(aggregated)[0]
-    res.min = bins_edges[aggregated[non_zero[0]]]
-    # print(len(bins_edges), non_zero[-1], (1 if non_zero[-1] != len(bins_edges) else 0))
-    res.max = bins_edges[non_zero[-1] + (1 if non_zero[-1] != len(bins_edges) - 1 else 0)]
+    if len(non_zero) > 0:
+        res.min = bins_edges[aggregated[non_zero[0]]]
+        res.max = bins_edges[non_zero[-1] + (1 if non_zero[-1] != len(bins_edges) - 1 else 0)]
+    else:
+        res.min = res.max = 0
 
     res.log_bins = False
     if rebins_count is not None:

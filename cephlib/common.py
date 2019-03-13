@@ -168,8 +168,8 @@ def setup_logging(log_config_fname: str = None, log_file: str = None, log_level:
 FILES_TO_REMOVE = []  # type: List[str]
 
 
-def tmpnam(remove_after: bool = True) -> str:
-    fd, name = tempfile.mkstemp()
+def tmpnam(remove_after: bool = True, **kwargs) -> str:
+    fd, name = tempfile.mkstemp(**kwargs)
     os.close(fd)
     if remove_after:
         FILES_TO_REMOVE.append(name)
