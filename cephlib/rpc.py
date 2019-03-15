@@ -1,3 +1,4 @@
+import sys
 import json
 import zlib
 import time
@@ -82,5 +83,5 @@ def rpc_run(rpc, cmd, timeout=60, input_data=None, node_name=None, start_timeout
             if ecode == 0:
                 return out
             else:
-                raise subprocess.CalledProcessError(ecode, cmd, output=out, stderr=err)
+                raise subprocess.CalledProcessError(ecode, cmd, output=out+err)
         time.sleep(check_timeout)

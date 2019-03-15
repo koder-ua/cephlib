@@ -58,7 +58,7 @@ def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: i
         raise RuntimeError("Local process timeout: " + cmd_str)
 
     if 0 != proc.returncode:
-        raise subprocess.CalledProcessError(proc.returncode, cmd_str, stdout_data + stderr_data)
+        raise subprocess.CalledProcessError(proc.returncode, cmd_str, output=stdout_data + stderr_data)
     return stdout_data + (stderr_data if merge_err else b'')
 
 
