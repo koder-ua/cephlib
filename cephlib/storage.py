@@ -155,7 +155,8 @@ class JsonSerializer(ISerializer):
             raise ValueError("Can't pickle object {!r} to json.") from exc
 
     def unpack(self, data: bytes) -> Any:
-        return json.loads(data.decode("utf8"))
+        # TODO: dirty hack for issue with 10.2.x ceph version osd df output
+        return json.loads(data.decode("utf8").replace('"utilization":-nan,"var":-nan', '"utilization":0,"var":0'))
 
 
 if yaml:

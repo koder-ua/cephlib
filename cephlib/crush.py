@@ -1,3 +1,5 @@
+import json
+import logging
 import re
 from typing import Iterator, Tuple, List, Optional, Dict
 
@@ -156,6 +158,85 @@ def copy_class_subtree(src_node: Node, classname: str = None) -> Optional[Node]:
                     childs=childs)
 
 
+def load_crushmap_js(filename: str = None, crush: Dict = None) -> Crush:
+    assert not filename or not crush, "filename and content should not be passed at the same time"
+
+    if filename:
+        crush = json.load(open(filename))
+
+    assert crush
+    rules = {}
+
+    for rule in crush["rules"]:
+        for step in rule['steps']:
+            if step['op'] == 'take':
+                root = step["item_name"]
+                break
+        else:
+            continue
+
+        if '~' in root:
+            root, class_name = root.split("~")
+        else:
+            class_name = None
+
+        replicated_on = None
+        for step in rule['steps'][1:]:
+            if step['op'] in ("chooseleaf_firstn", "chooseleaf_indep"):
+                replicated_on = step["type"]
+
+        rules[rule['rule_id']] = Rule(name=rule['rule_name'],
+                                      id=rule['rule_id'],
+                                      root=root,
+                                      class_name=class_name,
+                                      replicated_on=replicated_on)
+
+    nodes_dct: Dict[int, Dict] = {}
+    nodes: Dict[int, Node] = {}
+    osd_classes = {osd['id']: osd.get("class", "") for osd in crush['devices']}
+    for bucket in crush["buckets"]:
+        nodes_dct[bucket['id']] = bucket
+        for child in bucket["items"]:
+            cid = child['id']
+            if cid >= 0:
+                nodes[cid] = Node(cid, f"osd.{cid}", "osd", child['weight'] / 65536, [],
+                                  class_name=osd_classes.get(cid))
+    roots = []
+    while nodes_dct:
+        update_one = False
+        for node_id in list(nodes_dct):
+            node = nodes_dct[node_id]
+            for item in node['items']:
+                if item['id'] not in nodes:
+                    break
+            else:
+                update_one = True
+                nodes[node_id] = Node(node_id, node['name'], node['type_name'], node['weight'] / 65536,
+                                      [nodes[cdict['id']] for cdict in node['items']],
+                                      class_name=None)
+                del nodes_dct[node_id]
+                if node['type_name'] == 'root':
+                    roots.append(nodes[node_id])
+
+        assert update_one, "Failed to parse crush"
+
+    nodes_map = {node.name: node for node in nodes.values()}
+
+    crush = Crush(nodes_map, roots, rules)
+    crush.build_search_idx()
+    return crush
+
+
+def find_device_classes(crushmap: str) -> Dict[int, str]:
+    osd_class_re = re.compile(r"device\s+(?P<osd_id>\d+)\s+osd\.\d+\s+class\s+(?P<class_name>[^\s]+)$")
+    res = {}  # type: Dict[int, str]
+    for line in iter_crush_lines(crushmap):
+        rr = osd_class_re.match(line)
+        if rr:
+            res[int(rr.group('osd_id'))] = rr.group('class_name')
+    return res
+
+
 def crush_prep_line(line):
     if "#" in line:
         line = line.split("#", 1)[0]
@@ -192,16 +273,6 @@ def iter_buckets(crushmap: str) -> Iterator[Tuple[str, str, str]]:
                 bucket_type = rr.group('type')
                 bucket_name = rr.group('name')
                 bucket_lines = []
-
-
-def find_device_classes(crushmap: str) -> Dict[int, str]:
-    osd_class_re = re.compile(r"device\s+(?P<osd_id>\d+)\s+osd\.\d+\s+class\s+(?P<class_name>[^\s]+)$")
-    res = {}  # type: Dict[int, str]
-    for line in iter_crush_lines(crushmap):
-        rr = osd_class_re.match(line)
-        if rr:
-            res[int(rr.group('osd_id'))] = rr.group('class_name')
-    return res
 
 
 def load_crushmap(filename: str = None, content: str = None) -> Crush:
