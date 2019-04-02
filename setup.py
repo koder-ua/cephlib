@@ -13,6 +13,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/koder-ua/cephlib",
     packages=setuptools.find_packages(),
+    python_requires=">=3.7.2",
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.7",
