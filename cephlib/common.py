@@ -6,64 +6,56 @@ import math
 import socket
 import atexit
 import logging
+import asyncio
 import tempfile
 import ipaddress
 import subprocess
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, Iterator, cast, Union, Tuple, Callable, TypeVar, List, Any, Optional, IO, Dict
+import logging.config as logging_config
+from typing import Iterable, Iterator, cast, Union, Tuple, List, IO, Optional, Dict, Any, TypeVar, Callable
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
-import logging.config as logging_config
+
 from .types import Number, TNumber
+
 
 logger = logging.getLogger("cephlib")
 
 
 # command execution ----------------------------------------------------------------------------------------------------
 
-def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: int = 20,
-                log: bool = True, merge_err: bool = False) -> bytes:
+async def run_locally(cmd: Union[str, List[str]], input_data: bytes = None, timeout: int = 20,
+                      log: bool = True, merge_err: bool = False) -> Tuple[bytes, bytes]:
+
+    if isinstance(cmd, list):
+        func = asyncio.create_subprocess_exec
+        cmd_s = cmd
+        cmd = [cmd]
+    else:
+        func = asyncio.create_subprocess_shell
+        cmd_s = " ".join(cmd)
+
+    stdin = asyncio.subprocess.PIPE if input_data else None
+    stderr = asyncio.subprocess.STDOUT if merge_err else asyncio.subprocess.PIPE
 
     if log:
-        logger.debug("CMD %r", cmd)
+        logger.debug("Run: %s", cmd_s)
 
-    if isinstance(cmd, str):
-        shell = True
-        cmd_str = cmd
-    else:
-        shell = False
-        cmd_str = " ".join(cmd)
+    proc = await func(*cmd, timeout=timeout, stdout=asyncio.subprocess.PIPE, stderr=stderr, stdin=stdin)
+    out, err = await proc.communicate(input=input_data)
 
-    proc = subprocess.Popen(cmd,
-                            shell=shell,
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-    try:
-        stdout_data, stderr_data = proc.communicate(input_data, timeout=timeout)
-    except TimeoutError:
-        if psutil is not None:
-            parent = psutil.Process(proc.pid)
-            for child in parent.children(recursive=True):
-                child.kill()
-            parent.kill()
-        else:
-            proc.kill()
-        proc.wait(0.1)
-        raise RuntimeError("Local process timeout: " + cmd_str)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out + err)
 
-    if 0 != proc.returncode:
-        raise subprocess.CalledProcessError(proc.returncode, cmd_str, output=stdout_data + stderr_data)
-    return stdout_data + (stderr_data if merge_err else b'')
+    return out, err
 
 
-def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retry: int = 3, timeout: int = 20,
-            input_data: bytes = None, merge_err: bool = False) -> bytes:
+async def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retry: int = 3, timeout: int = 20,
+                  input_data: bytes = None, merge_err: bool = False) -> Tuple[bytes, bytes]:
     if no_retry:
         max_retry = 0
 
@@ -71,7 +63,7 @@ def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retr
     logger.debug("SSH %s %r", host, cmd)
     while True:
         try:
-            return run_locally(ssh_cmd, input_data=input_data, timeout=timeout, log=False, merge_err=merge_err)
+            return await run_locally(ssh_cmd, input_data=input_data, timeout=timeout, log=False, merge_err=merge_err)
         except (subprocess.CalledProcessError, TimeoutError) as lexc:
             if max_retry == 0:
                 raise
@@ -91,18 +83,18 @@ def run_ssh(host: str, ssh_opts: str, cmd: str, no_retry: bool = False, max_retr
         time.sleep(1)
 
 
-def get_sshable_hosts(addrs: Iterable[str], ssh_opts: str, thcount: int = 32) -> List[str]:
-    def check_host(addr):
+async def get_sshable_hosts(loop: asyncio.AbstractEventLoop, addrs: Iterable[str], ssh_opts: str) -> List[str]:
+    async def check_host(addr):
         try:
             if not re.match(r"\d+\.\d+\.\d+\.\d+$", addr):
                 socket.gethostbyname(addr)
-            if run_ssh(addr, ssh_opts, 'pwd'):
+            if await run_ssh(addr, ssh_opts, 'pwd'):
                 return addr
         except (subprocess.CalledProcessError, socket.gaierror):
             return None
 
-    with ThreadPoolExecutor(thcount) as executor:
-        return [addr for addr in executor.map(check_host, addrs) if addr is not None]
+    tasks = {loop.create_task(check_host(addr)) for addr in addrs}
+    return [name for name in (await asyncio.wait(tasks)) if name]
 
 
 def which(program: str) -> Optional[str]:
@@ -272,7 +264,9 @@ def floats2str(vals: List[float], digits: int = 3, width: int = 8) -> List[str]:
                 result.append(format_val.format(sval))
     return result
 
+
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class Timeout(Iterable[float]):
     def __init__(self, timeout: int, message: str = None, min_tick: int = 1, no_exc: bool = False) -> None:

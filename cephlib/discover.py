@@ -1,46 +1,34 @@
 """ Collect data about ceph nodes"""
+import asyncio
 import json
 import random
 import logging
 from typing import Callable, Dict, List, Tuple, Optional
-from concurrent.futures import ThreadPoolExecutor
 
 
 logger = logging.getLogger("cephlib")
 
 
-class OSDInfo:
-    def __init__(self, id: int, journal: Optional[str],
-                 storage: Optional[str],
-                 config: Optional[str],
-                 db: str = None,
-                 bluestore: bool = None) -> None:
-        self.id = id
-        self.journal = journal
-        self.storage = storage
+class OSDConfig:
+    def __init__(self, osd_id: int, config: Dict[str, str]) -> None:
+        self.osd_id = osd_id
         self.config = config
-        self.db = db
-        self.bluestore = bluestore
 
     def __str__(self) -> str:
-        res = "OSDInfo({0.id!r}):\n    journal: {0.journal!r}\n    storage: {0.storage!r}".format(self)
-        if self.db:
-            res += "\n    db: {0.db}".format(self)
-        return res
+        return "OSDInfo({})".format(self.osd_id)
 
 
-def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: str) -> str:
+async def get_osd_config(check_output: Callable[[str], str], extra_args: str, osd_id: int) -> str:
     return check_output("ceph {0} -n osd.{1} --show-config".format(extra_args, osd_id))
 
 
-def get_osds_nodes(check_output: Callable[[str], str],
-                   extra_args: str = "",
-                   thcount: int = 1,
-                   get_config: bool = True) -> Dict[str, List[OSDInfo]]:
+async def get_osds_nodes(check_output: Callable,
+                         extra_args: str = "",
+                         get_config: bool = True,
+                         max_workers: int = 16) -> Dict[str, List[OSDConfig]]:
     """Get dict, which maps node ip to list of OSDInfo"""
 
-    data = check_output("ceph {0} --format json osd dump".format(extra_args))
-    jdata = json.loads(data)
+    jdata = json.loads(await check_output("ceph {0} --format json osd dump".format(extra_args)))
 
     osd_infos = {}
     osd_ips = {}
@@ -56,48 +44,39 @@ def get_osds_nodes(check_output: Callable[[str], str],
         else:
             osd_ips[osd_id] = osd_data["public_addr"].split(":")[0]
 
-    def worker(osd_id: str) -> Optional[str]:
+    semaphore = asyncio.Semaphore(max_workers)
+
+    async def get_osd_config_coro(osd_id: int) -> Tuple[int, Optional[str]]:
+        await semaphore.acquire()
         try:
-            return get_osd_config(check_output, extra_args, osd_id)
-        except:
-            return None
+            return osd_id, (await get_osd_config(check_output, extra_args, osd_id))
+        except Exception:
+            return osd_id, None
 
     if not get_config:
         for osd_id, ip in osd_ips.items():
-            osd_infos.setdefault(ip, []).append(OSDInfo(osd_id, journal=None,
-                                                        storage=None,
-                                                        config=None))
+            osd_infos.setdefault(ip, []).append(OSDConfig(osd_id, {}))
         return osd_infos
 
     first_error = True
-    ids = list(osd_ips)
-    random.shuffle(ids)
-    with ThreadPoolExecutor(thcount) as pool:
-        for osd_id, osd_cfg in zip(ids, pool.map(worker, ids)):
-            if osd_cfg is None:
-                if first_error:
-                    logger.warning("Failed to get config for OSD {0}".format(osd_id))
-                    first_error = False
-            else:
-                if osd_cfg.count("osd_journal =") != 1 or osd_cfg.count("osd_data =") != 1:
-                    logger.warning("Can't detect osd.{} journal or storage path. Use default values".format(osd_id))
-                    osd_data_path = "/var/lib/ceph/osd/ceph-{0}".format(osd_id)
-                    osd_journal_path = "/var/lib/ceph/osd/ceph-{0}/journal".format(osd_id)
-                else:
-                    osd_journal_path = osd_cfg.split("osd_journal =")[1].split("\n")[0].strip()
-                    osd_data_path = osd_cfg.split("osd_data =")[1].split("\n")[0].strip()
+    osd_ids = list(osd_ips)
 
-                ip = osd_ips[osd_id]
-                osd_infos.setdefault(ip, []).append(OSDInfo(osd_id,
-                                                            journal=osd_journal_path,
-                                                            storage=osd_data_path,
-                                                            config=osd_cfg))
+    # shuffle to run in parallel for osd's from different nodes
+    random.shuffle(osd_ids)
+
+    for osd_id, osd_cfg in asyncio.gather(*map(get_osd_config_coro, osd_ids)):
+        if osd_cfg is None:
+            if first_error:
+                logger.warning("Failed to get config for OSD {0}".format(osd_id))
+                first_error = False
+        else:
+            osd_infos.setdefault(osd_ips[osd_id], []).append(OSDConfig(osd_id, config=osd_cfg))
     return osd_infos
 
 
-def get_mons_nodes(check_output: Callable[[str], str], extra_args: str = "") -> Dict[int, Tuple[str, str]]:
+async def get_mons_nodes(check_output, extra_args: str = "") -> Dict[int, Tuple[str, str]]:
     """Return mapping mon_id => mon_ip"""
-    data = check_output("ceph {0} --format json mon_status".format(extra_args))
+    data = await check_output("ceph {0} --format json mon_status".format(extra_args))
     jdata = json.loads(data)
     ips = {}
 
@@ -114,4 +93,3 @@ def get_mons_nodes(check_output: Callable[[str], str], extra_args: str = "") -> 
             ips[mon_data["rank"]] = (ip, mon_data["name"])
 
     return ips
-
