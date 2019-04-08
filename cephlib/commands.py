@@ -23,8 +23,8 @@ class CephCmd(IntEnum):
     radosgw_admin = 4
 
 
-async def get_ceph_version(extra_args: Iterable[str] = tuple()) -> CephVersion:
-    ver_s = await run_stdout(['ceph', *extra_args, '--version'])
+async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple()) -> CephVersion:
+    ver_s = await node.run_str(['ceph', *extra_args, '--version'])
     return parse_ceph_version(ver_s)
 
 
@@ -40,26 +40,24 @@ class CephCLI:
                 CephCmd.rbd: 'rbd',
                 CephCmd.radosgw_admin: 'radosgw-admin'}
 
-    async def run_raw(self, cmd: Union[str, List[str]]) -> str:
+    async def run_no_ceph(self, cmd: Union[str, List[str]], **kwargs) -> str:
         if self.node is None:
-            return await run_stdout(cmd, timeout=self.timeout)
+            return await run_stdout(cmd, timeout=self.timeout, **kwargs)
         else:
-            return await self.node.run_str(cmd, timeout=self.timeout)
+            return await self.node.run_str(cmd, timeout=self.timeout, **kwargs)
 
-    async def run(self, cmd: Union[str, List[str]], *, target: CephCmd = CephCmd.ceph) -> str:
+    async def run(self, cmd: Union[str, List[str]], *, target: CephCmd = CephCmd.ceph, **kwargs) -> str:
         if isinstance(cmd, str):
             cmd = cmd.split()
-        return await self.run_raw([self.binaries[target], *self.extra_params, *cmd])
-
-    async def run_json(self, cmd: Union[str, List[str]]) -> Any:
-        if isinstance(cmd, str):
-            cmd = cmd.split()
-        return json.loads(await self.run(['--format', 'json'] + cmd))
+        return await self.run_no_ceph([self.binaries[target], *self.extra_params, *cmd], **kwargs)
 
     async def run_json_raw(self, cmd: Union[str, List[str]]) -> str:
         if isinstance(cmd, str):
             cmd = cmd.split()
-        return await self.run(['--format', 'json'] + cmd)
+        return await self.run(['--format', 'json'] + cmd, merge_err=False)
+
+    async def run_json(self, cmd: Union[str, List[str]]) -> Any:
+        return json.loads(await self.run_json_raw(cmd))
 
     async def get_local_osds(self, target_class: str = None) -> Set[int]:
         """
@@ -99,7 +97,7 @@ class CephCLI:
         all_osds_by_node_ip = set()
 
         # find by node ips
-        all_ips = (await self.run_raw("hostname -I")).split()
+        all_ips = (await self.run_no_ceph("hostname -I")).split()
         for osd in (await self.run_json("osd dump"))['osds']:
             public_ip = osd['public_addr'].split(":", 1)[0]
             cluster_ip = osd['cluster_addr'].split(":", 1)[0]

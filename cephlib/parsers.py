@@ -163,7 +163,7 @@ def parse_ceph_report(raw_report: Dict[str, Any]) -> CephReport:
                                 metadata=osd_info,
                                 public_ip=public_ip,
                                 cluster_ip=cluster_ip,
-                                version=parse_ceph_version("ceph_version")))
+                                version=parse_ceph_version(osd_info["ceph_version"])))
 
     mons = []
     for mon_info in raw_report["monmap"]["mons"]:
