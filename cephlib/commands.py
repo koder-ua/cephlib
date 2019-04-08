@@ -19,6 +19,8 @@ from . import (CephRelease, OSDMetadata, parse_ceph_version, get_all_child_osds,
 class CephCmd(IntEnum):
     ceph = 1
     rados = 2
+    rbd = 3
+    radosgw_admin = 4
 
 
 async def get_ceph_version(extra_args: Iterable[str] = tuple()) -> CephVersion:
@@ -33,7 +35,10 @@ class CephCLI:
     timeout: int
     release: CephRelease
 
-    binaries = {CephCmd.ceph: 'ceph', CephCmd.rados: 'rados'}
+    binaries = {CephCmd.ceph: 'ceph',
+                CephCmd.rados: 'rados',
+                CephCmd.rbd: 'rbd',
+                CephCmd.radosgw_admin: 'radosgw-admin'}
 
     async def run_raw(self, cmd: Union[str, List[str]]) -> str:
         if self.node is None:
