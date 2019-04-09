@@ -32,8 +32,9 @@ async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple()
 class CephCLI:
     node: Optional[IAsyncNode]
     extra_params: List[str]
-    timeout: int
+    timeout: float
     release: CephRelease
+    env: Optional[Dict[str, str]] = None
 
     binaries = {CephCmd.ceph: 'ceph',
                 CephCmd.rados: 'rados',
@@ -41,23 +42,25 @@ class CephCLI:
                 CephCmd.radosgw_admin: 'radosgw-admin'}
 
     async def run_no_ceph(self, cmd: Union[str, List[str]], **kwargs) -> str:
+        kwargs.setdefault('timeout', self.timeout)
         if self.node is None:
-            return await run_stdout(cmd, timeout=self.timeout, **kwargs)
+            kwargs.setdefault('env', self.env)
+            return await run_stdout(cmd, **kwargs)
         else:
-            return await self.node.run_str(cmd, timeout=self.timeout, **kwargs)
+            return await self.node.run_str(cmd, **kwargs)
 
     async def run(self, cmd: Union[str, List[str]], *, target: CephCmd = CephCmd.ceph, **kwargs) -> str:
         if isinstance(cmd, str):
             cmd = cmd.split()
         return await self.run_no_ceph([self.binaries[target], *self.extra_params, *cmd], **kwargs)
 
-    async def run_json_raw(self, cmd: Union[str, List[str]]) -> str:
+    async def run_json_raw(self, cmd: Union[str, List[str]], **kwargs) -> str:
         if isinstance(cmd, str):
             cmd = cmd.split()
-        return await self.run(['--format', 'json'] + cmd, merge_err=False)
+        return await self.run(['--format', 'json'] + cmd, merge_err=False, **kwargs)
 
-    async def run_json(self, cmd: Union[str, List[str]]) -> Any:
-        return json.loads(await self.run_json_raw(cmd))
+    async def run_json(self, cmd: Union[str, List[str]], **kwargs) -> Any:
+        return json.loads(await self.run_json_raw(cmd, **kwargs))
 
     async def get_local_osds(self, target_class: str = None) -> Set[int]:
         """
