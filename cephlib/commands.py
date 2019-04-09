@@ -116,8 +116,8 @@ class CephCLI:
         """
         prefix = f"daemon osd.{osd_id} config set"
         try:
-            assert "success" in self.run_json(f"{prefix} osd_op_history_duration {duration}")
-            assert "success" in self.run_json(f"{prefix} osd_op_history_size {size}")
+            assert "success" in await self.run_json(f"{prefix} osd_op_history_duration {duration}")
+            assert "success" in await self.run_json(f"{prefix} osd_op_history_size {size}")
         except subprocess.SubprocessError:
             return False
         return True
