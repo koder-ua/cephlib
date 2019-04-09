@@ -304,16 +304,16 @@ class IPackerBase(metaclass=abc.ABCMeta):
     @classmethod
     def pack_record(cls, rec_tp: RecId, data: Any) -> Optional[Tuple[RecId, bytes]]:
         if rec_tp in (RecId.pools, RecId.cluster_info, RecId.params):
-            assert isinstance(data, dict)
+            assert isinstance(data, dict), str(data)
             return rec_tp, json.dumps(data).encode()
         elif rec_tp == RecId.pgdump:
-            assert isinstance(data, str)
+            assert isinstance(data, str), str(data)
             return rec_tp, data.encode()
         elif rec_tp == RecId.ops:
             osd_id, ctime, ops = data
-            assert isinstance(osd_id, int)
-            assert isinstance(ctime, int)
-            assert isinstance(ops, list)
+            assert isinstance(osd_id, int), str(data)
+            assert isinstance(ctime, int), str(data)
+            assert isinstance(ops, list), str(data)
             assert all(isinstance(rec, CephOp) for rec in ops)
             packed = []  # type: List[bytes]
             for op in ops:
