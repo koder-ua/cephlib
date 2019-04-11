@@ -23,8 +23,8 @@ class CephCmd(IntEnum):
     radosgw_admin = 4
 
 
-async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple()) -> CephVersion:
-    ver_s = await node.run_str(['ceph', *extra_args, '--version'])
+async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple(), **kwargs) -> CephVersion:
+    ver_s = await node.run_str(['ceph', *extra_args, '--version'], **kwargs)
     return parse_ceph_version(ver_s)
 
 
