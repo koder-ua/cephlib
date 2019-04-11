@@ -1,22 +1,30 @@
-from enum import IntEnum
+from enum import IntEnum, Enum
 
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Iterator
 
 
-class CephHealth(IntEnum):
-    HEALTH_OK = 0
-    SCRUB_MISSMATCH = 1
-    CLOCK_SKEW = 2
-    OSD_DOWN = 3
-    REDUCED_AVAIL = 4
-    DEGRADED = 5
-    NO_ACTIVE_MGR = 6
-    SLOW_REQUESTS = 7
-    MON_ELECTION = 8
+class CephHealth(Enum):
+    HEALTH_OK = 1
+    SCRUB_MISSMATCH = 2
+    CLOCK_SKEW = 3
+    OSD_DOWN = 4
+    REDUCED_AVAIL = 5
+    DEGRADED = 6
+    NO_ACTIVE_MGR = 7
+    SLOW_REQUESTS = 8
+    MON_ELECTION = 9
 
 
-class CephRelease(IntEnum):
+class CephRole(Enum):
+    mon = 1
+    osd = 2
+    rgw = 3
+    mgr = 4
+    mds = 5
+
+
+class CephRelease(Enum):
     jewel = 10
     kraken = 11
     luminous = 12

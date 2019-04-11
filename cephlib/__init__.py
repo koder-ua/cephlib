@@ -1,4 +1,5 @@
-from .classes import CrushNode, Rule, Crush, CephHealth, CephRelease, CephVersion, OSDMetadata, MonMetadata, CephReport
+from .classes import (CrushNode, Rule, Crush, CephHealth, CephRelease, CephVersion, OSDMetadata, MonMetadata,
+                      CephReport, CephRole)
 from .parsers import (copy_class_subtree, load_crushmap_js, get_replication_nodes,
                       calc_node_class_weight, parse_ceph_report, parse_ceph_version, get_all_child_osds,
                       parse_ceph_volumes_js, parse_ceph_disk_js)

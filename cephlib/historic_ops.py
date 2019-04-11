@@ -669,15 +669,15 @@ class RecordFile:
         self.cache_size = 0
         self.unpacked_offset = 0
 
-    def truncate_invalid_tail(self) -> bool:
-        try:
-            self.seek_to_last_valid_record()
-            return False
-        except (UnexpectedEOF, AssertionError, ValueError):
-            self.fd.truncate()
-            return True
+    def close(self) -> None:
+        self.fd = None  # typing: ignore
+
+    def seek_to_last_valid_record(self) -> None:
+        for _ in self.iter_records():
+            pass
 
     def prepare_for_append(self, truncate_invalid: bool = False) -> bool:
+        """returns true if any data truncated alread"""
         header = self.read_file_header()
 
         if header is None:
@@ -687,10 +687,15 @@ class RecordFile:
         else:
             assert header == HEADER_LAST, "Can only append to file with {} version".format(HEADER_LAST_NAME)
             if truncate_invalid:
-                return self.truncate_invalid_tail()
+                try:
+                    self.seek_to_last_valid_record()
+                    return False
+                except (UnexpectedEOF, AssertionError, ValueError):
+                    self.fd.truncate()
+                    return True
             else:
                 self.seek_to_last_valid_record()
-                return True
+                return False
 
     def tell(self) -> int:
         return self.fd.tell()
@@ -715,12 +720,12 @@ class RecordFile:
         assert hdr in ALL_SUPPORTED_HEADERS, f"Unknown header {hdr!r}"
         return hdr
 
-    def make_header_for_rec(self, rec_type: RecId, data: bytes):
+    def make_header_for_rec(self, rec_type: RecId, data: bytes) -> bytes:
         id_bt = bytes((rec_type.value,))
         checksum = zlib.adler32(data, zlib.adler32(id_bt))
         return self.rec_header.pack(checksum, len(data) + 1) + id_bt
 
-    def flush(self):
+    def flush(self) -> None:
         self.fd.flush()
 
     def write_record(self, rec_type: RecId, data: bytes, flush: bool = True) -> None:
@@ -789,10 +794,6 @@ class RecordFile:
         except Exception:
             self.fd.seek(offset, os.SEEK_SET)
             raise
-
-    def seek_to_last_valid_record(self):
-        for _ in self.iter_records():
-            pass
 
 
 def parse_historic_file(os_fd: BinaryIO) -> Iterator[Tuple[RecId, Any]]:
