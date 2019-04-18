@@ -1,5 +1,6 @@
 import datetime
 import os
+import random
 import re
 import time
 import abc
@@ -12,9 +13,9 @@ import zlib
 from enum import Enum, IntEnum
 from io import BytesIO
 from struct import Struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (Any, Dict, Tuple, Iterator, List, Iterable, cast, Type, Callable,
-                    Optional, NamedTuple, NewType, Match, BinaryIO)
+                    Optional, NamedTuple, NewType, Match, BinaryIO, TypeVar, Generic)
 
 
 logger = logging.getLogger("cephlib.ops")
@@ -840,6 +841,57 @@ def print_records_from_file(file: str, limit: Optional[int]) -> None:
                         print(RawPacker.format_op(op))
                     if limit is not None and idx == limit:
                         return
+
+
+@dataclass
+class HistoricBin:
+    total_count: int
+    bin_levels: List[int]
+
+    # stage => [counts]
+    bins: Dict[str, List[int]] = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        assert sorted(self.bin_levels) == self.bin_levels
+        assert len(set(self.bin_levels)) == len(self.bin_levels)
+        self.bins = {name: [0] * len(self.bin_levels) for name in HLTimings.__annotations__}
+
+    def add_op(self, op: HLTimings) -> None:
+        self.total_count += 1
+        for name, val in op.__dict__.items():
+            self.bins[name][bisect.bisect_left(self.bin_levels, val)] += 1
+
+
+T = TypeVar('T')
+
+
+@dataclass
+class SamplingList(Generic[T]):
+    count: int
+    total_processed_count: int = field(init=False, default=0)
+    skip: int = field(init=False, default=0)
+    curr_counter: int = field(init=False, default=0)
+    samples: List[T] = field(init=False, default_factory=list)
+    pretenders: List[T] = field(init=False, default_factory=list)
+
+    def add(self, obj: T) -> None:
+        self.total_processed_count += 1
+        if self.curr_counter == self.skip:
+            self.pretenders.append(obj)
+            self.curr_counter = 0
+            if len(self.pretenders) == self.count:
+                self.samples = random.sample(self.samples + self.pretenders, self.count)
+        else:
+            self.curr_counter += 1
+
+
+class HistStorage:
+    def __init__(self) -> None:
+        self.storage: Dict[int, HistoricBin] = {}  # key is max bin time value
+
+    def add_op(self, op: HLTimings) -> None:
+        pass
+
 
 
 #

@@ -2,7 +2,7 @@ import json
 import re
 from typing import Dict, Any, Iterator, Optional
 
-from cephlib.classes import Crush, Rule, CrushNode, CephReport, OSDMetadata, MonMetadata, CephVersion
+from .classes import Crush, Rule, CrushNode, CephReport, OSDMetadata, MonMetadata, CephVersion
 
 
 def parse_ceph_volumes_js(cephvollist_js: str) -> Dict[int, Dict[str, str]]:
@@ -17,7 +17,7 @@ def parse_ceph_volumes_js(cephvollist_js: str) -> Dict[int, Dict[str, str]]:
                                        "block.db_dev": dev,
                                        "block.wal_dev": dev,
                                        "store_type": "bluestore"}
-        return devs_for_osd
+    return devs_for_osd
 
 
 def parse_ceph_disk_js(cephdisklist_js: str) -> Dict[int, Dict[str, str]]:
