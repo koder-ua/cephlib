@@ -12,8 +12,8 @@ from typing import Dict, Iterator, Set, Any, List, Optional, Union, Tuple, TextI
 
 from koder_utils import run_stdout, IAsyncNode
 
-from . import (CephRelease, parse_ceph_version, get_all_child_osds, CephHealth,
-               CephReport, CephVersion, OSDMetadata, MonMetadata)
+from . import (CephRelease, parse_ceph_version, get_all_child_osds, CephHealth, CephReport, CephVersion, OSDMetadata,
+               MonMetadata)
 
 
 class CephCmd(IntEnum):
@@ -133,11 +133,7 @@ class CephCLI:
         return {pdata["poolnum"]: pdata["poolname"] for pdata in data}
 
     async def get_osd_metadata(self, osd_id: int) -> OSDMetadata:
-        mdata = await self.run_json(f"osd metadata {osd_id}")
-        public_ip, _ = mdata['front_addr'].split(":")
-        cluster_ip, _ = mdata['back_addr'].split(":")
-        return OSDMetadata(osd_id, mdata['hostname'], mdata, public_ip=public_ip, cluster_ip=cluster_ip,
-                           version=parse_ceph_version(mdata['ceph_version']))
+        return OSDMetadata.from_json(await self.run_json(f"osd metadata {osd_id}"))
 
     async def get_mons_nodes(self) -> Tuple[List[MonMetadata], List[str]]:
         """Return mapping mon_id => mon_ip"""
@@ -155,8 +151,9 @@ class CephCLI:
 
         return result, failed_mons
 
-    async def discover_report(self) -> CephReport:
-        return parse_ceph_report(await self.run_json("report"))
+    async def discover_report(self) -> Tuple[CephReport, Any]:
+        report_dct = await self.run_json("report")
+        return CephReport.from_json(report_dct), report_dct
 
 
 def iter_ceph_logs_fd() -> Iterator[TextIO]:
