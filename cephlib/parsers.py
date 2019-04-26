@@ -1,8 +1,11 @@
+import collections
+import dataclasses
+import datetime
 import json
 import re
-from typing import Dict, Any, Iterator, Optional
+from typing import Dict, Any, Iterator, Optional, List, Set, Tuple
 
-from .classes import Crush, Rule, CrushNode, CephReport, OSDMetadata, MonMetadata, CephVersion
+from . import Crush, CephVersion, PGDump, PGState, Pool
 
 
 def parse_ceph_volumes_js(cephvollist_js: str) -> Dict[int, Dict[str, str]]:
@@ -56,26 +59,26 @@ def parse_ceph_status(data: Dict[str, Any]) -> None:
     pass
 
 
-def copy_class_subtree(src_node: CrushNode, classname: str = None) -> Optional[CrushNode]:
-    childs = []
-    for ch in src_node.childs:
-        if ch.type == 'osd' and (ch.class_name != classname and classname is not None):
-            continue
-        ch_copy = copy_class_subtree(ch, classname)
-        if ch_copy:
-            childs.append(ch_copy)
+# def copy_class_subtree(src_node: CrushNode, classname: str = None) -> Optional[CrushNode]:
+#     childs = []
+#     for ch in src_node.childs:
+#         if ch.type == 'osd' and (ch.class_name != classname and classname is not None):
+#             continue
+#         ch_copy = copy_class_subtree(ch, classname)
+#         if ch_copy:
+#             childs.append(ch_copy)
+#
+#     weight = sum((ch.weight for ch in childs), 0) if childs else src_node.weight
+#     if (src_node.type == 'osd' or childs) and weight != 0:
+#         return CrushNode(id=src_node.id,
+#                          name=src_node.name,
+#                          type=src_node.type,
+#                          class_name=src_node.class_name,
+#                          weight=weight,
+#                          childs=childs)
 
-    weight = sum((ch.weight for ch in childs), 0) if childs else src_node.weight
-    if (src_node.type == 'osd' or childs) and weight != 0:
-        return CrushNode(id=src_node.id,
-                         name=src_node.name,
-                         type=src_node.type,
-                         class_name=src_node.class_name,
-                         weight=weight,
-                         childs=childs)
 
-
-def load_crushmap_js(filename: str = None, crush: Dict = None) -> Crush:
+def parse_crushmap_js(filename: str = None, crush: Dict = None) -> Crush:
     assert not filename or not crush, "filename and content should not be passed at the same time"
 
     if filename:
@@ -142,49 +145,14 @@ def load_crushmap_js(filename: str = None, crush: Dict = None) -> Crush:
     crush = Crush(nodes_map, roots, rules)
     crush.build_search_idx()
     return crush
-
-
-def get_replication_nodes(rule: Rule, crush: Crush) -> Iterator[CrushNode]:
-    return crush.get_root(rule.root).iter_nodes(rule.replicated_on)
-
-
-def calc_node_class_weight(node: CrushNode, class_name: str) -> float:
-    return sum(ch.weight for ch in node.iter_nodes('osd', class_name))
-
-
-def parse_ceph_report(raw_report: Dict[str, Any]) -> CephReport:
-    osds = []
-    for osd_info in raw_report["osd_metadata"]:
-        public_ip, _ = osd_info['front_addr'].split(":")
-        cluster_ip, _ = osd_info['back_addr'].split(":")
-        osd_id = osd_info['id']
-        osds.append(OSDMetadata(osd_id=osd_id,
-                                hostname=osd_info["hostname"],
-                                metadata=osd_info,
-                                public_ip=public_ip,
-                                cluster_ip=cluster_ip,
-                                version=parse_ceph_version(osd_info["ceph_version"])))
-
-    mons = []
-    for mon_info in raw_report["monmap"]["mons"]:
-        ip = mon_info["public_addr"].split(":")[0]
-        mons.append(MonMetadata(ip, mon_info["name"], mon_info))
-
-    major, minor, bugfix = map(int, raw_report["version"].split("."))
-    version = CephVersion(major, minor, bugfix, extra="", commit_hash=raw_report["commit"])
-    return CephReport(osds=osds, mons=mons, raw=raw_report, version=version)
-
-
-version_rr = re.compile(r'ceph version\s+(?P<version>\d+\.\d+\.\d+)(?P<extra>[^ ]*)\s+' +
-                        r'[([](?P<hash>[^)\]]*?)[)\]]')
-
-
-def parse_ceph_version(version_str: str) -> CephVersion:
-    rr = version_rr.match(version_str)
-    if not rr:
-        raise ValueError(f"Can't parse ceph version {version_str!r}")
-    major, minor, bugfix = map(int, rr.group("version").split("."))
-    return CephVersion(major, minor, bugfix, extra=rr.group("extra"), commit_hash=rr.group("hash"))
+#
+#
+# def get_replication_nodes(rule: Rule, crush: Crush) -> Iterator[CrushNode]:
+#     return crush.get_root(rule.root).iter_nodes(rule.replicated_on)
+#
+#
+# def calc_node_class_weight(node: CrushNode, class_name: str) -> float:
+#     return sum(ch.weight for ch in node.iter_nodes('osd', class_name))
 
 
 def get_all_child_osds(node: Dict, crush_nodes: Dict[int, Dict], target_class: str = None) -> Iterator[int]:
@@ -197,3 +165,98 @@ def get_all_child_osds(node: Dict, crush_nodes: Dict[int, Dict], target_class: s
     for ch_id in node['children']:
         yield from get_all_child_osds(crush_nodes[ch_id], crush_nodes)
 
+
+def parse_txt_ceph_config(data: str) -> Dict[str, str]:
+    config = {}
+    for line in data.strip().split("\n"):
+        name, val = line.split("=", 1)
+        config[name.strip()] = val.strip()
+    return config
+
+
+def parse_pg_dump(data: Dict[str, Any]) -> PGDump:
+    pgs: List[PG] = []
+
+    def pgid_conv(vl_any):
+        pool_s, pg_s = vl_any.split(".")
+        return PGId(pool=int(pool_s), num=int(pg_s, 16), id=vl_any)
+
+    def datetime_conv(vl_any):
+        # datetime.datetime.strptime is too slow
+        vl_s, mks = vl_any.split(".")
+        ymd, hms = vl_s.split()
+        return datetime.datetime(*map(int, ymd.split("-")+ hms.split(":")), int(mks))
+
+    def process_status(status: str) -> Set[PGState]:
+        try:
+            return {getattr(PGState, status.replace("-", "_")) for status in status.split("+")}
+        except AttributeError:
+            raise ValueError(f"Unknown status {status}")
+
+    name_map = {
+        "stat_sum": lambda x: PGStatSum(**x),
+        "state": process_status,
+        "pgid": pgid_conv
+    }
+
+    for field in dataclasses.fields(PG):
+        if field.name not in name_map:
+            if field.type is datetime.datetime:
+                name_map[field.name] = datetime_conv
+
+    class TabulaRasa:
+        pass
+
+    for pg_info in data['pg_stats']:
+        # hack to optimize load speed
+        dt = {k: (name_map[k](v) if k in name_map else v) for k, v in pg_info.items()}
+        pgs.append(PG(**dt))
+
+    datetm, mks = data['stamp'].split(".")
+    collected_at = datetime.datetime.strptime(datetm, '%Y-%m-%d %H:%M:%S').replace(microsecond=int(mks))
+    return PGDump(collected_at=collected_at,
+                  pgs={pg.pgid.id: pg for pg in pgs},
+                  version=data['version'])
+
+
+def parse_pg_distribution(pools: Dict[str, Pool], pg_dump: Dict[str, Any]) -> Tuple[Dict[int, Dict[str, int]],
+                                                                                    Dict[str, int],
+                                                                                    Dict[int, int]]:
+
+    pool_id2name = {pool.id: pool.name for pool in pools.values()}
+    osd_pool_pg_2d: Dict[int, Dict[str, int]] = collections.defaultdict(lambda: collections.Counter())
+    sum_per_pool: Dict[str, int] = collections.Counter()
+    sum_per_osd: Dict[int, int] = collections.Counter()
+
+    if pg_dump:
+        for pg in pg_dump['pg_stats']:
+            pool_id = int(pg['pgid'].split('.', 1)[0])
+            for osd_id in pg['acting']:
+                pool_name = pool_id2name[pool_id]
+                osd_pool_pg_2d[osd_id][pool_name] += 1
+                sum_per_pool[pool_name] += 1
+                sum_per_osd[osd_id] += 1
+
+    return {osd_id: dict(per_pool.items()) for osd_id, per_pool in osd_pool_pg_2d.items()}, \
+            dict(sum_per_pool.items()), dict(sum_per_osd.items())
+
+
+def parse_ceph_versions(data: str) -> Dict[str, CephVersion]:
+    osd_ver_rr = re.compile(r"(osd\.\d+|mon\.[a-z0-9A-Z-]+):\s+{")
+    vers: Dict[str, CephVersion] = {}
+    for line in data.split("\n"):
+        line = line.strip()
+        if osd_ver_rr.match(line):
+            name, data_js = line.split(":", 1)
+            rr = version_rr.match(json.loads(data_js)["version"])
+            try:
+                vers[name.strip()] = parse_ceph_version(json.loads(data_js)["version"])
+            except Exception as exc:
+                raise ValueError(f"Can't parse version {line}: {exc}")
+    return vers
+
+
+def cmd(cmd_name: str):
+    def closure(f):
+        return f
+    return closure

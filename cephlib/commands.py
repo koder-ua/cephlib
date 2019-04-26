@@ -12,8 +12,8 @@ from typing import Dict, Iterator, Set, Any, List, Optional, Union, Tuple, TextI
 
 from koder_utils import run_stdout, IAsyncNode
 
-from . import (CephRelease, OSDMetadata, parse_ceph_version, get_all_child_osds,
-               MonMetadata, CephReport, parse_ceph_report, CephHealth, CephVersion)
+from . import (CephRelease, parse_ceph_version, get_all_child_osds, CephHealth,
+               CephReport, CephVersion, OSDMetadata, MonMetadata)
 
 
 class CephCmd(IntEnum):

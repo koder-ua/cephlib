@@ -162,8 +162,8 @@ def parse_description(descr: str) -> Tuple[ParseResult, Optional[OpDescription]]
     """
     Get type for operation
     """
-
     rr = osd_op_re.match(descr)
+    print(descr, rr)
     if rr:
         pool, pg = get_pool_pg(rr)
         if rr.group('op') == 'read':
@@ -199,9 +199,10 @@ def get_hl_timings(tp: OpType, evt_map: Dict[str, int]) -> HLTimings:
 
     try:
         if tp == OpType.write_secondary:
-            local_done = evt_map["sub_op_applied"]
+            # workaround for jewel ceph
+            local_done = evt_map["sub_op_applied"] if "sub_op_applied" in evt_map else evt_map['done']
         elif tp == OpType.write_primary:
-            local_done = evt_map["op_applied"]
+            local_done = evt_map["op_applied"] if "op_applied" in evt_map else evt_map['done']
         else:
             local_done = evt_map["done"]
     except KeyError:
@@ -218,7 +219,7 @@ def get_hl_timings(tp: OpType, evt_map: Dict[str, int]) -> HLTimings:
     wait_for_pg = started - qpg_at
     assert wait_for_pg >= 0
     local_io = local_done - started
-    assert local_io >= 0
+    assert local_io >= 0, f"local_io = {local_done} - {started} < 0"
 
     wait_for_replica = -1
     if tp in (OpType.write_primary, OpType.write_secondary):

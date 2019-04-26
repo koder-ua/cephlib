@@ -1,0 +1,1 @@
+make a directory with ceph outputs examples from different ceph versions
