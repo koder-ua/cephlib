@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address
 from typing import Dict, Any, List, Optional, Union, Set, TypeVar, Callable, Type, Tuple, cast
 
-from koder_utils import Host, DiskType, JsonBase, js, register_from_json
+from koder_utils import DiskType, JsonBase, js, register_from_json
 
 T = TypeVar("T")
 
@@ -202,6 +202,10 @@ def from_cmd(cmd: str, *releases: CephRelease) -> Callable[[Type[T]], Type[T]]:
     return closure
 
 
+def parse_cmd_output(cmd: str, release: CephRelease, data: Any) -> Any:
+    return _CLASSES_MAPPING[(cmd, release)].from_json(data)
+
+
 @from_cmd("rados df", CephRelease.luminous)
 @dataclass
 class RadosDF(JsonBase):
@@ -295,7 +299,7 @@ class OSDDf(JsonBase):
 
 @from_cmd("ceph status", CephRelease.luminous)
 @dataclass
-class Status(JsonBase):
+class CephStatus(JsonBase):
 
     @dataclass
     class Health(JsonBase):
@@ -335,21 +339,27 @@ class Status(JsonBase):
         num_pgs: int
         num_pools: int
         pgs_by_state: List[Dict[str, Any]]
+        read_op_per_sec: int = js(default=0)
+        read_bytes_per_sec: int = js(default=0)
+        write_op_per_sec: int = js(default=0)
+        write_bytes_sec: int = js(default=0)
 
     election_epoch: int
     fsid: str
-    fsmap: Dict[str, Any]
     health: Health
-    mgrmap: Dict[str, Any]
-    osdmap: Dict[str, Any]
+    monmap: MonMap
     pgmap: PgMap
     quorum: List[int]
     quorum_names: List[str]
+
+    fsmap: Dict[str, Any]
+    mgrmap: Dict[str, Any]
+    osdmap: Dict[str, Any]
     servicemap: Dict[str, Any]
 
 
 @dataclass
-class StatSum(JsonBase):
+class CephIOStats(JsonBase):
     num_bytes: int
     num_bytes_hit_set_archive: int
     num_bytes_recovered: int
@@ -387,6 +397,17 @@ class StatSum(JsonBase):
     num_legacy_snapsets: Optional[int]
     num_large_omap_objects: Optional[int]
 
+    def __add__(self: Type[T], other: T) -> T:
+        res = {}
+        for name, vl in self.__dict__.items():
+            other_vl = getattr(other, name)
+            if vl is None or other_vl is None:
+                res[name] = None
+            else:
+                assert isinstance(vl, int) and isinstance(other_vl, int)
+                res[name] = vl + other_vl
+        return self.__class__(**res)
+
 
 class CephMGR:
     pass
@@ -398,9 +419,26 @@ class RadosGW:
 
 @dataclass
 class MonMetadata(JsonBase):
-    ip: EndpointAddr
     name: str
-    metadata: Dict[str, Any]
+    addr: EndpointAddr
+    arch: str
+    ceph_version: CephVersion
+    cpu: str
+    distro: str
+    distro_description: str
+    distro_version: str
+    hostname: str
+    kernel_description: str
+    kernel_version: str
+    mem_swap_kb: int
+    mem_total_kb: int
+    os: str
+
+
+@from_cmd("ceph mon metadata", CephRelease.luminous)
+@dataclass
+class MonsMetadata(JsonBase):
+    mons: List[MonMetadata]
 
 
 def from_disk_short_type(vl: str) -> DiskType:
@@ -412,7 +450,7 @@ def from_disk_short_type(vl: str) -> DiskType:
 
 
 @dataclass
-class BlueFSDevInfo(JsonBase):
+class BlueFSDev(JsonBase):
     access_mode: str
     block_size: int
     dev_node: str
@@ -423,57 +461,6 @@ class BlueFSDevInfo(JsonBase):
     type: DiskType = js(converter=from_disk_short_type)
     dev: Tuple[int, int] = js(converter=lambda v: tuple(map(int, v.split(":"))))
     rotational: bool = js(converter=lambda v: v == '1')
-
-
-@dataclass
-class Pool:
-    id: int
-    name: str
-    size: int
-    min_size: int
-    pg: int
-    pgp: int
-    crush_rule: int
-    extra: Dict[str, Any]
-    df: RadosDF.RadosDFPoolInfo
-    apps: List[str]
-
-
-@dataclass
-class CephMonitorStorage:
-    database_size: int
-    b_avail: int
-    avail_percent: int
-
-
-@dataclass
-class CephMonitor:
-    name: str
-    status: Optional[str]
-    host: Host
-    role: MonRole
-    version: Optional[CephVersion]
-    storage: Optional[CephMonitorStorage] = None
-
-
-@dataclass
-class CephStatus:
-    status: CephStatusCode
-    health_summary: Any
-    num_pgs: int
-
-    bytes_used: int
-    bytes_total: int
-    bytes_avail: int
-
-    data_bytes: int
-    pgmap_stat: Any
-    monmap_stat: Dict[str, Any]
-
-    write_bytes_sec: int
-    read_bytes_sec: int
-    write_op_per_sec: int
-    read_op_per_sec: int
 
 
 @dataclass
@@ -530,7 +517,7 @@ class PGStat(JsonBase):
     up: List[int]
     up_primary: int
     version: str
-    stat_sum: StatSum
+    stat_sum: CephIOStats
 
     @classmethod
     def __convert_state__(cls, v: str) -> Set[PGState]:
@@ -545,13 +532,13 @@ class PGStatSum(JsonBase):
     ondisk_log_size: int
     log_size: int
     acting: int
-    stat_sum: StatSum
+    stat_sum: CephIOStats
     up: int
 
 
 @dataclass
 class PoolStatSum(JsonBase):
-    stat_sum: StatSum
+    stat_sum: CephIOStats
     acting: int
     log_size: int
     num_pg: int
@@ -562,6 +549,7 @@ class PoolStatSum(JsonBase):
 
 @dataclass
 class OSDStat(JsonBase):
+    osd: int
     up_from: int
     seq: int
     num_pgs: int
@@ -679,24 +667,24 @@ class CrushMap(JsonBase):
     types: Dict[str, int] = js(converter=lambda v: {itm["name"]: itm["type_id"] for itm in v})
 
 
-class ReportBlueStoreInfo(JsonBase):
-    db: BlueFSDevInfo = js(noauto=True)
-    wal: BlueFSDevInfo = js(noauto=True)
-    data: BlueFSDevInfo = js(noauto=True)
+class BlueStoreDevices(JsonBase):
+    db: BlueFSDev = js(noauto=True)
+    wal: BlueFSDev = js(noauto=True)
+    data: BlueFSDev = js(noauto=True)
 
     @classmethod
     def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
         obj = cls()
         attrs = {}
-        for name in BlueFSDevInfo.__annotations__:
+        for name in BlueFSDev.__annotations__:
             attrs[name] = v[f"bluefs_db_{name}"]
-        obj.db = BlueFSDevInfo.from_json(attrs)
+        obj.db = BlueFSDev.from_json(attrs)
         obj.wal = obj.db
 
         attrs = {}
-        for name in BlueFSDevInfo.__annotations__:
+        for name in BlueFSDev.__annotations__:
             attrs[name] = v[f"bluestore_bdev_{name}"]
-        obj.data = BlueFSDevInfo.from_json(attrs)
+        obj.data = BlueFSDev.from_json(attrs)
         return obj
 
 
@@ -729,14 +717,14 @@ class OSDMetadata(JsonBase):
     bluefs: bool = js(converter=lambda v: v == '1')
     rotational: bool = js(converter=lambda v: v == '1')
     journal_rotational: bool = js(converter=lambda v: v == '1')
-    bs_info: Optional[ReportBlueStoreInfo] = js(noauto=True)
+    bs_info: Optional[BlueStoreDevices] = js(noauto=True)
 
     @classmethod
     def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
         obj = cast(OSDMetadata, super().from_json(v))
 
         if obj.bluefs:
-            obj.bs_info = ReportBlueStoreInfo.from_json(v)
+            obj.bs_info = BlueStoreDevices.from_json(v)
 
         return obj
 
@@ -861,7 +849,7 @@ def parse_ceph_version_simple(v: str) -> CephVersion:
 class CephReport(JsonBase):
     @dataclass
     class PoolsSum(JsonBase):
-        stat_sum: StatSum
+        stat_sum: CephIOStats
         acting: int
         log_size: int
         ondisk_log_size: int
@@ -881,9 +869,9 @@ class CephReport(JsonBase):
     commit: str
     timestamp: DateTime
     tag: str
-    health: Status.Health
+    health: CephStatus.Health
     osd_metadata: List[OSDMetadata]
-    monmap: Status.MonMap
+    monmap: CephStatus.MonMap
     crushmap: CrushMap
     osdmap_first_committed: int
     osdmap_last_committed: int
@@ -916,3 +904,41 @@ class CephReport(JsonBase):
             num_pg_by_state.append((states, int(st["num"])))
         obj.num_pg_by_state = num_pg_by_state
         return obj
+
+
+def from_ceph_str_size(v: str) -> int:
+    assert len(v) >= 1
+    mp = {'k': 2 ** 10, 'm': 2 ** 20, 'g': 2 ** 30, 't': 2 ** 40}
+    if v[-1] in mp:
+        return int(v[:-1]) * mp[v[-1]]
+    return int(v)
+
+
+def lvtags_parser(v: str) -> Dict[str, str]:
+    res: Dict[str, str] = {}
+    for item in v.split(","):
+        k, v = item.split("=")
+        assert k not in res
+        res[k] = v
+    return res
+
+
+@dataclass
+class LVMListDevice(JsonBase):
+    devices: List[Path]
+    lv_name: str
+    lv_path: Path
+    lv_uuid: str
+    name: str
+    path: Path
+    tags: Dict[str, Any]
+    type: str
+    vg_name: str
+    lv_size: int = js(converter=from_ceph_str_size)
+    lv_tags: Dict[str, str] = js(converter=lvtags_parser)
+
+
+@dataclass
+class VolumeLVMList(JsonBase):
+    devices: Dict[int, List[LVMListDevice]]
+
