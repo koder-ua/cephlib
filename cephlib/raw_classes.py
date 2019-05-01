@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address
 from typing import Dict, Any, List, Optional, Union, Set, TypeVar, Callable, Type, Tuple, cast
 
-from koder_utils import DiskType, JsonBase, js, register_from_json
+from koder_utils import DiskType, JsonBase, js, register_from_json, IntArithmeticMixin
 
 T = TypeVar("T")
 
@@ -166,6 +166,10 @@ def parse_ceph_version(version_str: str) -> CephVersion:
     return CephVersion(major, minor, bugfix, extra=rr.group("extra"), commit_hash=rr.group("hash"))
 
 
+def parse_ceph_version_simple(v: str) -> CephVersion:
+    return CephVersion(*[int(i) for i in v.split(".")], extra="", commit_hash="")
+
+
 @dataclass
 class EndpointAddr:
     ip: IPv4Address
@@ -210,7 +214,7 @@ def parse_cmd_output(cmd: str, release: CephRelease, data: Any) -> Any:
 @dataclass
 class RadosDF(JsonBase):
     @dataclass
-    class RadosDFPoolInfo(JsonBase):
+    class RadosDFPoolInfo(JsonBase, IntArithmeticMixin):
         name: str
         id: int
         size_bytes: int
@@ -258,6 +262,22 @@ class CephDF(JsonBase):
 
     stats: Stats
     pools: List[Pools]
+
+
+@from_cmd("ceph osd perf", CephRelease.luminous)
+@dataclass
+class OSDPerf(JsonBase):
+    @dataclass
+    class OSDPerfItem(JsonBase):
+        @dataclass
+        class PerfStat(JsonBase):
+            apply_latency_ms: int
+            commit_latency_ms: int
+
+        id: int
+        perf_stats: PerfStat
+
+    osd_perf_infos: List[OSDPerfItem]
 
 
 @from_cmd("ceph osd df", CephRelease.luminous)
@@ -343,6 +363,8 @@ class CephStatus(JsonBase):
         read_bytes_per_sec: int = js(default=0)
         write_op_per_sec: int = js(default=0)
         write_bytes_sec: int = js(default=0)
+        recovering_bytes_per_sec: int = js(default=0)
+        recovering_objects_per_sec: int = js(default=0)
 
     election_epoch: int
     fsid: str
@@ -359,7 +381,7 @@ class CephStatus(JsonBase):
 
 
 @dataclass
-class CephIOStats(JsonBase):
+class CephIOStats(JsonBase, IntArithmeticMixin):
     num_bytes: int
     num_bytes_hit_set_archive: int
     num_bytes_recovered: int
@@ -397,17 +419,6 @@ class CephIOStats(JsonBase):
     num_legacy_snapsets: Optional[int]
     num_large_omap_objects: Optional[int]
 
-    def __add__(self: Type[T], other: T) -> T:
-        res = {}
-        for name, vl in self.__dict__.items():
-            other_vl = getattr(other, name)
-            if vl is None or other_vl is None:
-                res[name] = None
-            else:
-                assert isinstance(vl, int) and isinstance(other_vl, int)
-                res[name] = vl + other_vl
-        return self.__class__(**res)
-
 
 class CephMGR:
     pass
@@ -439,6 +450,10 @@ class MonMetadata(JsonBase):
 @dataclass
 class MonsMetadata(JsonBase):
     mons: List[MonMetadata]
+
+    @classmethod
+    def from_json(cls: Type[T], dt: List[Dict[str, Any]]) -> T:
+        return cls(mons=[MonMetadata.from_json(dct) for dct in dt])
 
 
 def from_disk_short_type(vl: str) -> DiskType:
@@ -549,7 +564,6 @@ class PoolStatSum(JsonBase):
 
 @dataclass
 class OSDStat(JsonBase):
-    osd: int
     up_from: int
     seq: int
     num_pgs: int
@@ -561,6 +575,7 @@ class OSDStat(JsonBase):
     num_snap_trimming: int
     op_queue_age_hist: Dict[str, Any]
     perf_stat: Dict[str, Any]
+    osd: Optional[int] = js(default=None)
 
 
 @from_cmd("ceph pg dump", CephRelease.luminous)
@@ -630,7 +645,7 @@ class CrushMap(JsonBase):
     class Device(JsonBase):
         id: int
         name: str
-        class_: Optional[str] = js(key='class')
+        class_name: Optional[str] = js(key='class')
 
     @dataclass
     class Bucket(JsonBase):
@@ -645,9 +660,14 @@ class CrushMap(JsonBase):
         type_id: int
         type_name: str
         weight: float
-        alg: CrushAlg
-        hash: HashAlg
+        alg: Optional[CrushAlg]
+        hash: Optional[HashAlg]
         items: List[Item]
+        class_name: Optional[str] = js(default=None)
+
+        @property
+        def is_osd(self) -> bool:
+            return self.id >= 0
 
     @dataclass
     class Rule(JsonBase):
@@ -789,7 +809,6 @@ class OSDMap(JsonBase):
     class OSD(JsonBase):
         osd: int
         uuid: str
-        up: int
         weight: float
         primary_affinity: float
         last_clean_begin: int
@@ -803,7 +822,8 @@ class OSDMap(JsonBase):
         heartbeat_back_addr: EndpointAddr
         heartbeat_front_addr: EndpointAddr
         state: Set[OSDState] = js(converter=lambda v: {OSDState[name] for name in v})
-        in_: int = js(key='in')
+        in_: bool = js(key='in', converter=lambda x: x == 1)
+        up: bool = js(converter=lambda x: x == 1)
 
     @dataclass
     class OSDXInfo(JsonBase):
@@ -838,10 +858,6 @@ class OSDMap(JsonBase):
     blacklist: Dict[str, Any]
     erasure_code_profiles: Dict[str, Any]
     flags: List[str] = js(converter=lambda v: v.split(","))
-
-
-def parse_ceph_version_simple(v: str) -> CephVersion:
-    return CephVersion(*[int(i) for i in v.split(".")], extra="", commit_hash="")
 
 
 @from_cmd("ceph report", CephRelease.luminous)
@@ -910,7 +926,7 @@ def from_ceph_str_size(v: str) -> int:
     assert len(v) >= 1
     mp = {'k': 2 ** 10, 'm': 2 ** 20, 'g': 2 ** 30, 't': 2 ** 40}
     if v[-1] in mp:
-        return int(v[:-1]) * mp[v[-1]]
+        return int(float(v[:-1]) * mp[v[-1]])
     return int(v)
 
 
@@ -940,5 +956,11 @@ class LVMListDevice(JsonBase):
 
 @dataclass
 class VolumeLVMList(JsonBase):
-    devices: Dict[int, List[LVMListDevice]]
+    osds: Dict[int, List[LVMListDevice]]
 
+    @classmethod
+    def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
+        osds = {}
+        for key, items in v.items():
+            osds[int(key)] = [LVMListDevice.from_json(item) for item in items]
+        return cls(osds=osds)

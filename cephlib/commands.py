@@ -12,8 +12,7 @@ from typing import Dict, Iterator, Set, Any, List, Optional, Union, Tuple, TextI
 
 from koder_utils import run_stdout, IAsyncNode
 
-from . import (CephRelease, parse_ceph_version, get_all_child_osds, CephHealth, CephReport, CephVersion, OSDMetadata,
-               MonMetadata)
+from . import CephRelease, parse_ceph_version, CephHealth, CephReport, CephVersion, OSDMetadata, MonMetadata
 
 
 class CephCmd(IntEnum):
@@ -26,6 +25,18 @@ class CephCmd(IntEnum):
 async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple(), **kwargs) -> CephVersion:
     ver_s = await node.run_str(['ceph', *extra_args, '--version'], **kwargs)
     return parse_ceph_version(ver_s)
+
+
+# for ceph osd tree
+def get_all_child_osds(node: Dict, crush_nodes: Dict[int, Dict], target_class: str = None) -> Iterator[int]:
+    # workaround for incorrect node classes on some prod clusters
+    if node['type'] == 'osd' or re.match("osd\.\d+", node['name']):
+        if target_class is None or node.get('device_class') == target_class:
+            yield node['id']
+        return
+
+    for ch_id in node['children']:
+        yield from get_all_child_osds(crush_nodes[ch_id], crush_nodes)
 
 
 @dataclass

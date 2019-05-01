@@ -1,12 +1,10 @@
-import collections
-import re
 import json
+import collections
 import dataclasses
 from pathlib import Path
-from typing import Dict, Iterator, Union, Tuple
+from typing import Dict, Union
 
-from cephlib import CrushMap, Crush, PGDump
-from . import VolumeLVMList, CrushRuleStepTake, CrushRuleStepEmit, CrushRuleStepChooseLeafFirstN
+from . import VolumeLVMList, PGDump
 
 
 @dataclasses.dataclass
@@ -28,11 +26,11 @@ OSDDevInfo = Union[OSDBSDevices, OSDFSDevices]
 def parse_ceph_volumes_js(cephvollist_js: str) -> Dict[int, OSDDevInfo]:
     devs_for_osd: Dict[int, Dict[str, Path]] = {}
 
-    for osd_id, devs in VolumeLVMList.from_json(json.loads(cephvollist_js)).devices.items():
+    for osd_id, devs in VolumeLVMList.from_json(json.loads(cephvollist_js)).osds.items():
         assert len(devs) == 1, "FixME"
         for dev in devs:
             assert len(dev.devices) == 1, "FixME"
-            devs_for_osd[osd_id][dev.type] = Path(dev.devices[0])
+            devs_for_osd.setdefault(osd_id, {})[dev.type] = Path(dev.devices[0])
 
     result: Dict[int, OSDDevInfo] = {}
     for osd_id, attrs in devs_for_osd.items():
@@ -68,17 +66,6 @@ def parse_ceph_disk_js(cephdisklist_js: str) -> Dict[int, OSDDevInfo]:
     return devs_for_osd
 
 
-def get_all_child_osds(node: Dict, crush_nodes: Dict[int, Dict], target_class: str = None) -> Iterator[int]:
-    # workaround for incorrect node classes on some prod clusters
-    if node['type'] == 'osd' or re.match("osd\.\d+", node['name']):
-        if target_class is None or node.get('device_class') == target_class:
-            yield node['id']
-        return
-
-    for ch_id in node['children']:
-        yield from get_all_child_osds(crush_nodes[ch_id], crush_nodes)
-
-
 def parse_txt_ceph_config(data: str) -> Dict[str, str]:
     config = {}
     for line in data.strip().split("\n"):
@@ -96,19 +83,3 @@ def parse_pg_distribution(pg_dump: PGDump) -> Dict[int, Dict[int, int]]:
             osd_pool_pg_2d[osd_id][pg.pgid.pool] += 1
 
     return {osd_id: dict(per_pool.items()) for osd_id, per_pool in osd_pool_pg_2d.items()}
-
-
-def iter_osds_for_bucket(crush: Crush, bucket: CrushMap.Bucket) -> Iterator[Tuple[int, float]]:
-    for child in bucket.items:
-        if child.id >= 0:
-            yield child.id, child.weight
-        else:
-            yield from iter_osds_for_bucket(crush, crush.id2bucket[child.id])
-
-
-def iter_osds_for_rule(crush: Crush, rule: CrushMap.Rule) -> Iterator[Tuple[int, float]]:
-    assert len(rule.steps) == 3
-    assert isinstance(rule.steps[0], CrushRuleStepTake)
-    assert isinstance(rule.steps[0], CrushRuleStepChooseLeafFirstN)
-    assert isinstance(rule.steps[2], CrushRuleStepEmit)
-    return iter_osds_for_bucket(crush, crush.name2bucket[rule.steps[0].item_name])
