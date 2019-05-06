@@ -1,0 +1,56 @@
+{
+   "total_used" : 38807424,
+   "total_objects" : 184067,
+   "total_avail" : 118466688,
+   "pools" : [
+      {
+         "id" : 2,
+         "name" : ".rgw.root",
+         "num_objects_unfound" : 0,
+         "read_ops" : 0,
+         "write_ops" : 0,
+         "num_object_clones" : 0,
+         "size_bytes" : 0,
+         "size_kb" : 0,
+         "num_objects_degraded" : 0,
+         "num_objects_missing_on_primary" : 0,
+         "num_object_copies" : 0,
+         "num_objects" : 0,
+         "read_bytes" : 0,
+         "write_bytes" : 0
+      },
+      {
+         "read_ops" : 260,
+         "num_objects_unfound" : 0,
+         "write_ops" : 3017,
+         "id" : 7,
+         "name" : "rbd",
+         "num_object_copies" : 48,
+         "num_objects" : 16,
+         "read_bytes" : 1312768,
+         "write_bytes" : 2230328320,
+         "num_object_clones" : 0,
+         "size_bytes" : 10956837,
+         "size_kb" : 10701,
+         "num_objects_missing_on_primary" : 0,
+         "num_objects_degraded" : 0
+      },
+      {
+         "read_ops" : 27,
+         "num_objects_unfound" : 0,
+         "write_ops" : 3691025,
+         "id" : 8,
+         "name" : "test",
+         "num_object_copies" : 552153,
+         "num_objects" : 184051,
+         "read_bytes" : 27648,
+         "write_bytes" : 83328500736,
+         "num_object_clones" : 0,
+         "size_bytes" : 11779264000,
+         "size_kb" : 11503188,
+         "num_objects_missing_on_primary" : 0,
+         "num_objects_degraded" : 0
+      }
+   ],
+   "total_space" : 157274112
+}

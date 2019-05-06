@@ -1,0 +1,42 @@
+{
+   "pools" : [
+      {
+         "name" : ".rgw.root",
+         "stats" : {
+            "bytes_used" : 0,
+            "objects" : 0,
+            "max_avail" : 38560133120,
+            "percent_used" : 0,
+            "kb_used" : 0
+         },
+         "id" : 2
+      },
+      {
+         "name" : "rbd",
+         "stats" : {
+            "max_avail" : 38560133120,
+            "percent_used" : 0.03,
+            "kb_used" : 10701,
+            "bytes_used" : 10956837,
+            "objects" : 16
+         },
+         "id" : 7
+      },
+      {
+         "id" : 8,
+         "stats" : {
+            "percent_used" : 23.4,
+            "kb_used" : 11503188,
+            "max_avail" : 38560133120,
+            "bytes_used" : 11779264000,
+            "objects" : 184051
+         },
+         "name" : "test"
+      }
+   ],
+   "stats" : {
+      "total_used_bytes" : 39738802176,
+      "total_avail_bytes" : 121309888512,
+      "total_bytes" : 161048690688
+   }
+}

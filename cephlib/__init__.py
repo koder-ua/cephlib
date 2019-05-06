@@ -2,8 +2,8 @@ from .raw_classes import (CephHealth, CephRole, OSDStatus, CephStatusCode, MonRo
                           EndpointAddr, DateTime, RadosDF, CephDF, OSDDf, CephStatus, CephIOStats, CephMGR, RadosGW,
                           PGStat, PGDump, CrushAlg, HashAlg, CrushMap, MonsMetadata, CrushRuleStepTake,
                           CrushRuleStepEmit, CrushRuleStepChooseLeafFirstN, OSDMapPool, OSDMap, CephReport, OSDState,
-                          CephVersion, MonMetadata, OSDMetadata, parse_ceph_version, VolumeLVMList, LVMListDevice,
-                          MonMetadata, parse_cmd_output, parse_ceph_version_simple, OSDPerf)
+                          CephVersion, OSDMetadata, parse_ceph_version, VolumeLVMList, LVMListDevice,
+                          parse_cmd_output, parse_ceph_version_simple, OSDPerf, MonMetadata)
 from .classes import (StatusRegion, Host, CephInfo, CephOSD, FileStoreInfo, BlueStoreInfo, OSDProcessInfo, CephDevInfo,
                       Crush, OSDSpace, Pool, CephMonitor, OSDDevCfg, get_rule_osd_class, get_rule_replication_level)
 from .historic_ops import (OpType, ParseResult, OpDescription, HLTimings, CephOp, IPacker, get_historic_packer,

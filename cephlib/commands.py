@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import glob
 import gzip
@@ -30,7 +32,7 @@ async def get_ceph_version(node: IAsyncNode, extra_args: Iterable[str] = tuple()
 # for ceph osd tree
 def get_all_child_osds(node: Dict, crush_nodes: Dict[int, Dict], target_class: str = None) -> Iterator[int]:
     # workaround for incorrect node classes on some prod clusters
-    if node['type'] == 'osd' or re.match("osd\.\d+", node['name']):
+    if node['type'] == 'osd' or re.match(r"osd\.\d+", node['name']):
         if target_class is None or node.get('device_class') == target_class:
             yield node['id']
         return
@@ -121,7 +123,7 @@ class CephCLI:
 
         return all_osds_by_node_ip
 
-    async def set_history_size_duration(self, osd_id: int, size: int, duration: int) -> bool:
+    async def set_history_size_duration(self, osd_id: int, size: int, duration: float) -> bool:
         """
         Set size and duration for historic_ops log
         """
@@ -132,6 +134,20 @@ class CephCLI:
         except subprocess.SubprocessError:
             return False
         return True
+
+    async def get_history_size_duration(self, osd_id: int) -> Optional[Tuple[int, float]]:
+        """
+        Get size and duration for historic_ops log
+        """
+        prefix = f"daemon osd.{osd_id} config get"
+        try:
+            duration_js = await self.run_json(f"{prefix} osd_op_history_duration")
+            size_js = await self.run_json(f"{prefix} osd_op_history_size")
+            assert "osd_op_history_duration" in duration_js
+            assert "osd_op_history_size" in size_js
+        except (subprocess.SubprocessError, AssertionError):
+            return None
+        return size_js["osd_op_history_size"], duration_js["osd_op_history_duration"]
 
     async def get_historic(self, osd_id: int) -> Any:
         """
@@ -144,7 +160,7 @@ class CephCLI:
         return {pdata["poolnum"]: pdata["poolname"] for pdata in data}
 
     async def get_osd_metadata(self, osd_id: int) -> OSDMetadata:
-        return OSDMetadata.from_json(await self.run_json(f"osd metadata {osd_id}"))
+        return OSDMetadata.convert(await self.run_json(f"osd metadata {osd_id}"))
 
     async def get_mons_nodes(self) -> Tuple[List[MonMetadata], List[str]]:
         """Return mapping mon_id => mon_ip"""
@@ -164,7 +180,7 @@ class CephCLI:
 
     async def discover_report(self) -> Tuple[CephReport, Any]:
         report_dct = await self.run_json("report")
-        return CephReport.from_json(report_dct), report_dct
+        return CephReport.convert(report_dct), report_dct
 
 
 def iter_ceph_logs_fd() -> Iterator[TextIO]:

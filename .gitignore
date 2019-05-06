@@ -4,3 +4,4 @@
 *.o
 build/
 dist/
+.pytest_cache/

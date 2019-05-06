@@ -1,0 +1,150 @@
+{
+   "election_epoch" : 622,
+   "health" : {
+      "checks" : {},
+      "status" : "HEALTH_OK",
+      "overall_status" : "HEALTH_WARN",
+      "summary" : [
+         {
+            "summary" : "'ceph health' JSON format has changed in luminous. If you see this your monitoring system is scraping the wrong fields. Disable this with 'mon health preluminous compat warning = false'",
+            "severity" : "HEALTH_WARN"
+         }
+      ]
+   },
+   "fsid" : "f53f4591-dd7d-41d4-866b-80a6771592c4",
+   "fsmap" : {
+      "epoch" : 1,
+      "by_rank" : []
+   },
+   "mgrmap" : {
+      "services" : {
+         "prometheus" : "http://ceph03:9283/"
+      },
+      "standbys" : [
+         {
+            "gid" : 3314101,
+            "name" : "ceph01",
+            "available_modules" : [
+               "balancer",
+               "dashboard",
+               "influx",
+               "localpool",
+               "prometheus",
+               "restful",
+               "selftest",
+               "status",
+               "zabbix"
+            ]
+         },
+         {
+            "gid" : 3314103,
+            "name" : "ceph02",
+            "available_modules" : [
+               "balancer",
+               "dashboard",
+               "influx",
+               "localpool",
+               "prometheus",
+               "restful",
+               "selftest",
+               "status",
+               "zabbix"
+            ]
+         }
+      ],
+      "active_name" : "ceph03",
+      "active_gid" : 3314121,
+      "available_modules" : [
+         "balancer",
+         "dashboard",
+         "influx",
+         "localpool",
+         "prometheus",
+         "restful",
+         "selftest",
+         "status",
+         "zabbix"
+      ],
+      "modules" : [
+         "prometheus",
+         "status"
+      ],
+      "available" : true,
+      "epoch" : 726,
+      "active_addr" : "192.168.122.195:6804/996"
+   },
+   "quorum" : [
+      0,
+      1,
+      2
+   ],
+   "monmap" : {
+      "epoch" : 1,
+      "modified" : "2018-10-06 15:43:23.898671",
+      "mons" : [
+         {
+            "addr" : "192.168.122.190:6789/0",
+            "public_addr" : "192.168.122.190:6789/0",
+            "rank" : 0,
+            "name" : "ceph02"
+         },
+         {
+            "name" : "ceph01",
+            "rank" : 1,
+            "public_addr" : "192.168.122.191:6789/0",
+            "addr" : "192.168.122.191:6789/0"
+         },
+         {
+            "name" : "ceph03",
+            "rank" : 2,
+            "public_addr" : "192.168.122.195:6789/0",
+            "addr" : "192.168.122.195:6789/0"
+         }
+      ],
+      "features" : {
+         "optional" : [],
+         "persistent" : [
+            "kraken",
+            "luminous"
+         ]
+      },
+      "created" : "2018-10-06 15:43:23.898671",
+      "fsid" : "f53f4591-dd7d-41d4-866b-80a6771592c4"
+   },
+   "osdmap" : {
+      "osdmap" : {
+         "num_up_osds" : 3,
+         "num_remapped_pgs" : 0,
+         "epoch" : 756,
+         "nearfull" : false,
+         "num_in_osds" : 3,
+         "num_osds" : 3,
+         "full" : false
+      }
+   },
+   "pgmap" : {
+      "num_objects" : 184067,
+      "bytes_used" : 39738802176,
+      "bytes_total" : 161048690688,
+      "pgs_by_state" : [
+         {
+            "count" : 264,
+            "state_name" : "active+clean"
+         }
+      ],
+      "bytes_avail" : 121309888512,
+      "num_pools" : 3,
+      "num_pgs" : 264,
+      "data_bytes" : 11790220837
+   },
+   "quorum_names" : [
+      "ceph02",
+      "ceph01",
+      "ceph03"
+   ],
+   "servicemap" : {
+      "modified" : "0.000000",
+      "services" : {},
+      "epoch" : 1
+   }
+}

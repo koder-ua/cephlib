@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 import datetime
 from enum import Enum
@@ -6,7 +8,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address
 from typing import Dict, Any, List, Optional, Union, Set, TypeVar, Callable, Type, Tuple, cast
 
-from koder_utils import DiskType, JsonBase, js, register_from_json, IntArithmeticMixin
+from koder_utils import DiskType, ConvBase, field, IntArithmeticMixin, register_converter, ToInt
 
 T = TypeVar("T")
 
@@ -52,7 +54,7 @@ class CephStatusCode(Enum):
     err = 2
 
     @classmethod
-    def from_json(cls, val: str) -> 'CephStatusCode':
+    def convert(cls, val: str) -> CephStatusCode:
         val_l = val.lower()
         if val_l in ('error', 'err', 'health_err'):
             return cls.err
@@ -75,13 +77,13 @@ class CephRelease(Enum):
     mimic = 13
     nautilus = 14
 
-    def __lt__(self, other: 'CephRelease') -> bool:
+    def __lt__(self, other: CephRelease) -> bool:
         return self.value < other.value
 
-    def __gt__(self, other: 'CephRelease') -> bool:
+    def __gt__(self, other: CephRelease) -> bool:
         return self.value > other.value
 
-    def __ge__(self, other: 'CephRelease') -> bool:
+    def __ge__(self, other: CephRelease) -> bool:
         return self.value >= other.value
 
 
@@ -157,7 +159,7 @@ version_rr = re.compile(r'ceph version\s+(?P<version>\d+\.\d+\.\d+)(?P<extra>[^ 
                         r'[([](?P<hash>[^)\]]*?)[)\]]')
 
 
-@register_from_json(CephVersion)
+@register_converter(CephVersion)
 def parse_ceph_version(version_str: str) -> CephVersion:
     rr = version_rr.match(version_str)
     if not rr:
@@ -177,7 +179,7 @@ class EndpointAddr:
     pid: int
 
     @classmethod
-    def from_json(cls: Type[T], data: str) -> T:
+    def convert(cls: Type[T], data: str) -> T:
         ip, port_pid = data.split(":")
         port, pid = map(int, port_pid.split("/"))
         return cls(IPv4Address(ip), port, pid)
@@ -185,7 +187,7 @@ class EndpointAddr:
 
 class DateTime(datetime.datetime):
     @classmethod
-    def from_json(cls: Type[T], vl: str) -> T:
+    def convert(cls: Type[T], vl: str) -> T:
         datetm, mks = vl.split(".")
         return cls.strptime(datetm, '%Y-%m-%d %H:%M:%S').replace(microsecond=int(mks))
 
@@ -193,7 +195,7 @@ class DateTime(datetime.datetime):
 # CLI cmd classes ------------------------------------------------------------------------------------------------------
 
 
-_CLASSES_MAPPING: Dict[Tuple[str, CephRelease], JsonBase] = {}
+_CLASSES_MAPPING: Dict[Tuple[str, CephRelease], ConvBase] = {}
 
 
 def from_cmd(cmd: str, *releases: CephRelease) -> Callable[[Type[T]], Type[T]]:
@@ -201,20 +203,20 @@ def from_cmd(cmd: str, *releases: CephRelease) -> Callable[[Type[T]], Type[T]]:
         cls.__ceph_cmd__ = cmd
         cls.__ceph_releases__ = releases
         for release in releases:
-            _CLASSES_MAPPING[(cmd, release)] = cast(JsonBase, cls)
+            _CLASSES_MAPPING[(cmd, release)] = cast(ConvBase, cls)
         return cls
     return closure
 
 
 def parse_cmd_output(cmd: str, release: CephRelease, data: Any) -> Any:
-    return _CLASSES_MAPPING[(cmd, release)].from_json(data)
+    return _CLASSES_MAPPING[(cmd, release)].convert(data)
 
 
 @from_cmd("rados df", CephRelease.luminous)
 @dataclass
-class RadosDF(JsonBase):
+class RadosDF(ConvBase):
     @dataclass
-    class RadosDFPoolInfo(JsonBase, IntArithmeticMixin):
+    class RadosDFPoolInfo(ConvBase, IntArithmeticMixin):
         name: str
         id: int
         size_bytes: int
@@ -239,22 +241,22 @@ class RadosDF(JsonBase):
 
 @from_cmd("ceph df", CephRelease.luminous)
 @dataclass
-class CephDF(JsonBase):
+class CephDF(ConvBase):
     @dataclass
-    class Stats(JsonBase):
+    class Stats(ConvBase):
         total_used_bytes: int
         total_bytes: int
         total_avail_bytes: int
 
     @dataclass
-    class Pools(JsonBase):
+    class Pools(ConvBase):
         @dataclass
-        class PoolsStats(JsonBase):
-            percent_used: int
+        class PoolsStats(ConvBase):
             bytes_used: int
             kb_used: int
             max_avail: int
             objects: int
+            percent_used: float
 
         stats: PoolsStats
         id: int
@@ -266,11 +268,11 @@ class CephDF(JsonBase):
 
 @from_cmd("ceph osd perf", CephRelease.luminous)
 @dataclass
-class OSDPerf(JsonBase):
+class OSDPerf(ConvBase):
     @dataclass
-    class OSDPerfItem(JsonBase):
+    class OSDPerfItem(ConvBase):
         @dataclass
-        class PerfStat(JsonBase):
+        class PerfStat(ConvBase):
             apply_latency_ms: int
             commit_latency_ms: int
 
@@ -282,9 +284,9 @@ class OSDPerf(JsonBase):
 
 @from_cmd("ceph osd df", CephRelease.luminous)
 @dataclass
-class OSDDf(JsonBase):
+class OSDDf(ConvBase):
     @dataclass
-    class Node(JsonBase):
+    class Node(ConvBase):
         crush_weight: float
         depth: int
         device_class: str
@@ -302,7 +304,7 @@ class OSDDf(JsonBase):
         var: int
 
     @dataclass
-    class Summary(JsonBase):
+    class Summary(ConvBase):
         dev: int
         max_var: float
         min_var: float
@@ -319,12 +321,12 @@ class OSDDf(JsonBase):
 
 @from_cmd("ceph status", CephRelease.luminous)
 @dataclass
-class CephStatus(JsonBase):
+class CephStatus(ConvBase):
 
     @dataclass
-    class Health(JsonBase):
+    class Health(ConvBase):
         @dataclass
-        class Check(JsonBase):
+        class Check(ConvBase):
             severity: CephStatusCode
             summary: str
 
@@ -334,9 +336,9 @@ class CephStatus(JsonBase):
         summary: List[Check]
 
     @dataclass
-    class MonMap(JsonBase):
+    class MonMap(ConvBase):
         @dataclass
-        class MonBasicInfo(JsonBase):
+        class MonBasicInfo(ConvBase):
             addr: EndpointAddr
             name: str
             public_addr: EndpointAddr
@@ -350,7 +352,7 @@ class CephStatus(JsonBase):
         mons: List[MonBasicInfo]
 
     @dataclass
-    class PgMap(JsonBase):
+    class PgMap(ConvBase):
         bytes_avail: int
         bytes_total: int
         bytes_used: int
@@ -359,12 +361,12 @@ class CephStatus(JsonBase):
         num_pgs: int
         num_pools: int
         pgs_by_state: List[Dict[str, Any]]
-        read_op_per_sec: int = js(default=0)
-        read_bytes_per_sec: int = js(default=0)
-        write_op_per_sec: int = js(default=0)
-        write_bytes_sec: int = js(default=0)
-        recovering_bytes_per_sec: int = js(default=0)
-        recovering_objects_per_sec: int = js(default=0)
+        read_op_per_sec: int = field(default=0)
+        read_bytes_per_sec: int = field(default=0)
+        write_op_per_sec: int = field(default=0)
+        write_bytes_sec: int = field(default=0)
+        recovering_bytes_per_sec: int = field(default=0)
+        recovering_objects_per_sec: int = field(default=0)
 
     election_epoch: int
     fsid: str
@@ -381,7 +383,7 @@ class CephStatus(JsonBase):
 
 
 @dataclass
-class CephIOStats(JsonBase, IntArithmeticMixin):
+class CephIOStats(ConvBase, IntArithmeticMixin):
     num_bytes: int
     num_bytes_hit_set_archive: int
     num_bytes_recovered: int
@@ -429,7 +431,7 @@ class RadosGW:
 
 
 @dataclass
-class MonMetadata(JsonBase):
+class MonMetadata(ConvBase):
     name: str
     addr: EndpointAddr
     arch: str
@@ -441,19 +443,19 @@ class MonMetadata(JsonBase):
     hostname: str
     kernel_description: str
     kernel_version: str
+    os: str
     mem_swap_kb: int
     mem_total_kb: int
-    os: str
 
 
 @from_cmd("ceph mon metadata", CephRelease.luminous)
 @dataclass
-class MonsMetadata(JsonBase):
+class MonsMetadata(ConvBase):
     mons: List[MonMetadata]
 
     @classmethod
-    def from_json(cls: Type[T], dt: List[Dict[str, Any]]) -> T:
-        return cls(mons=[MonMetadata.from_json(dct) for dct in dt])
+    def convert(cls, dt: List[Dict[str, Any]]) -> MonsMetadata:
+        return MonsMetadata(mons=[MonMetadata.convert(dct) for dct in dt])
 
 
 def from_disk_short_type(vl: str) -> DiskType:
@@ -465,33 +467,42 @@ def from_disk_short_type(vl: str) -> DiskType:
 
 
 @dataclass
-class BlueFSDev(JsonBase):
+class BlueFSDev(ConvBase):
     access_mode: str
-    block_size: int
     dev_node: str
     driver: str
     model: str
     partition_path: Path
-    size: int
-    type: DiskType = js(converter=from_disk_short_type)
-    dev: Tuple[int, int] = js(converter=lambda v: tuple(map(int, v.split(":"))))
-    rotational: bool = js(converter=lambda v: v == '1')
+    size: ToInt
+    block_size: ToInt
+    # size: int = field(converter=int)
+    # block_size: int = field(converter=int)
+    type: DiskType = field(converter=from_disk_short_type)
+    dev: Tuple[int, int] = field(converter=lambda v: tuple(map(int, v.split(":"))))
+    rotational: bool = field(converter=lambda v: v == '1')
 
 
 @dataclass
-class PGId(JsonBase):
+class PGId(ConvBase):
     pool: int
     num: int
     id: str
 
     @classmethod
-    def from_json(cls: Type[T], dt: str) -> T:
-        pool, num = dt.split(".")
-        return cls(pool=int(pool), num=int(num, 16), id=dt)
+    def convert(cls: T, data: str) -> T:
+        pool, num = data.split(".")
+        return cls(pool=int(pool), num=int(num, 16), id=data)
+
+
+def convert_state(v: str) -> Set[PGState]:
+    try:
+        return {getattr(PGState, status.replace("-", "_")) for status in v.split("+")}
+    except AttributeError:
+        raise ValueError(f"Unknown status {v}")
 
 
 @dataclass
-class PGStat(JsonBase):
+class PGStat(ConvBase):
     acting: List[int]
     acting_primary: int
     blocked_by: List[int]
@@ -527,23 +538,16 @@ class PGStat(JsonBase):
     pin_stats_invalid: bool
     reported_epoch: int
     reported_seq: int
-    state: Set[PGState]
     stats_invalid: bool
     up: List[int]
     up_primary: int
     version: str
     stat_sum: CephIOStats
-
-    @classmethod
-    def __convert_state__(cls, v: str) -> Set[PGState]:
-        try:
-            return {getattr(PGState, status.replace("-", "_")) for status in v.split("+")}
-        except AttributeError:
-            raise ValueError(f"Unknown status {v}")
+    state: Set[PGState] = field(converter=convert_state)
 
 
 @dataclass
-class PGStatSum(JsonBase):
+class PGStatSum(ConvBase):
     ondisk_log_size: int
     log_size: int
     acting: int
@@ -552,7 +556,7 @@ class PGStatSum(JsonBase):
 
 
 @dataclass
-class PoolStatSum(JsonBase):
+class PoolStatSum(ConvBase):
     stat_sum: CephIOStats
     acting: int
     log_size: int
@@ -563,7 +567,7 @@ class PoolStatSum(JsonBase):
 
 
 @dataclass
-class OSDStat(JsonBase):
+class OSDStat(ConvBase):
     up_from: int
     seq: int
     num_pgs: int
@@ -575,12 +579,12 @@ class OSDStat(JsonBase):
     num_snap_trimming: int
     op_queue_age_hist: Dict[str, Any]
     perf_stat: Dict[str, Any]
-    osd: Optional[int] = js(default=None)
+    osd: Optional[int] = field(default=None)
 
 
 @from_cmd("ceph pg dump", CephRelease.luminous)
 @dataclass
-class PGDump(JsonBase):
+class PGDump(ConvBase):
     version: int
     stamp: DateTime
     pg_stats: List[PGStat]
@@ -598,19 +602,19 @@ class PGDump(JsonBase):
 
 
 @dataclass
-class CrushRuleStepTake(JsonBase):
+class CrushRuleStepTake(ConvBase):
     item: int
     item_name: str
 
 
 @dataclass
-class CrushRuleStepChooseLeafFirstN(JsonBase):
+class CrushRuleStepChooseLeafFirstN(ConvBase):
     num: int
     type: str
 
 
 @dataclass
-class CrushRuleStepChooseLeafIndepth(JsonBase):
+class CrushRuleStepChooseLeafIndepth(ConvBase):
     num: int
     type: str
 
@@ -622,35 +626,36 @@ class CrushRuleStepEmit:
 CrushRuleStep = Union[CrushRuleStepTake, CrushRuleStepChooseLeafFirstN, CrushRuleStepChooseLeafIndepth,
                       CrushRuleStepEmit]
 
+STEP_MAP: Dict[str, Callable[[Any], CrushRuleStep]] = {
+    'take': CrushRuleStepTake.convert,
+    'chooseleaf_firstn': CrushRuleStepChooseLeafFirstN.convert,
+    'chooseleaf_indep': CrushRuleStepChooseLeafIndepth.convert,
+    'emit': lambda _: CrushRuleStepEmit
+}
+
 
 def crush_rule_step(v: List[Dict[str, Any]]) -> List[CrushRuleStep]:
     res: List[CrushRuleStep] = []
     for step in v:
-        if step['op'] == 'take':
-            res.append(CrushRuleStepTake.from_json(step))
-        elif step['op'] == 'chooseleaf_firstn':
-            res.append(CrushRuleStepChooseLeafFirstN.from_json(step))
-        elif step['op'] == 'chooseleaf_indep':
-            res.append(CrushRuleStepChooseLeafIndepth.from_json(step))
-        elif step['op'] == 'emit':
-            res.append(CrushRuleStepEmit())
-        else:
-            raise ValueError(f"Can't parse crush step {step}")
+        try:
+            res.append(STEP_MAP[step['op']](step))
+        except KeyError:
+            raise ValueError(f"Can't parse crush step {step}") from None
     return res
 
 
 @dataclass
-class CrushMap(JsonBase):
+class CrushMap(ConvBase):
     @dataclass
-    class Device(JsonBase):
+    class Device(ConvBase):
         id: int
         name: str
-        class_name: Optional[str] = js(key='class')
+        class_name: Optional[str] = field(key='class')
 
     @dataclass
-    class Bucket(JsonBase):
+    class Bucket(ConvBase):
         @dataclass
-        class Item(JsonBase):
+        class Item(ConvBase):
             id: int
             weight: int
             pos: int
@@ -663,53 +668,53 @@ class CrushMap(JsonBase):
         alg: Optional[CrushAlg]
         hash: Optional[HashAlg]
         items: List[Item]
-        class_name: Optional[str] = js(default=None)
+        class_name: Optional[str] = field(default=None)
 
         @property
         def is_osd(self) -> bool:
             return self.id >= 0
 
     @dataclass
-    class Rule(JsonBase):
+    class Rule(ConvBase):
         rule_id: int
         rule_name: str
         ruleset: int
         type: int
         min_size: int
         max_size: int
-        steps: List[CrushRuleStep] = js(converter=crush_rule_step)
+        steps: List[CrushRuleStep] = field(converter=crush_rule_step)
 
     devices: List[Device]
     buckets: List[Bucket]
     rules: List[Rule]
     tunables: Dict[str, Any]
     choose_args: Dict[str, Any]
-    types: Dict[str, int] = js(converter=lambda v: {itm["name"]: itm["type_id"] for itm in v})
+    types: Dict[str, int] = field(converter=lambda v: {itm["name"]: itm["type_id"] for itm in v})
 
 
-class BlueStoreDevices(JsonBase):
-    db: BlueFSDev = js(noauto=True)
-    wal: BlueFSDev = js(noauto=True)
-    data: BlueFSDev = js(noauto=True)
+class BlueStoreDevices(ConvBase):
+    db: BlueFSDev = field(noauto=True)
+    wal: BlueFSDev = field(noauto=True)
+    data: BlueFSDev = field(noauto=True)
 
     @classmethod
-    def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
+    def convert(cls: Type[T], v: Dict[str, Any]) -> T:
         obj = cls()
         attrs = {}
         for name in BlueFSDev.__annotations__:
             attrs[name] = v[f"bluefs_db_{name}"]
-        obj.db = BlueFSDev.from_json(attrs)
+        obj.db = BlueFSDev.convert(attrs)
         obj.wal = obj.db
 
         attrs = {}
         for name in BlueFSDev.__annotations__:
             attrs[name] = v[f"bluestore_bdev_{name}"]
-        obj.data = BlueFSDev.from_json(attrs)
+        obj.data = BlueFSDev.convert(attrs)
         return obj
 
 
 @dataclass
-class OSDMetadata(JsonBase):
+class OSDMetadata(ConvBase):
     id: int
     arch: str
     back_addr: EndpointAddr
@@ -727,30 +732,30 @@ class OSDMetadata(JsonBase):
     hostname: str
     kernel_description: str
     kernel_version: str
-    mem_swap_kb: int
-    mem_total_kb: int
     os: str
     osd_data: Path
     osd_objectstore: OSDStoreType
 
-    bluefs_single_shared_device: bool = js(converter=lambda v: v == '1')
-    bluefs: bool = js(converter=lambda v: v == '1')
-    rotational: bool = js(converter=lambda v: v == '1')
-    journal_rotational: bool = js(converter=lambda v: v == '1')
-    bs_info: Optional[BlueStoreDevices] = js(noauto=True)
+    bluefs_single_shared_device: bool = field(converter=lambda v: v == '1')
+    bluefs: bool = field(converter=lambda v: v == '1')
+    rotational: bool = field(converter=lambda v: v == '1')
+    journal_rotational: bool = field(converter=lambda v: v == '1')
+    mem_swap_kb: int = field(converter=int)
+    mem_total_kb: int = field(converter=int)
+    bs_info: Optional[BlueStoreDevices] = field(noauto=True)
 
     @classmethod
-    def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
-        obj = cast(OSDMetadata, super().from_json(v))
+    def convert(cls: Type[T], v: Dict[str, Any]) -> T:
+        obj = cast(OSDMetadata, super().convert(v))
 
         if obj.bluefs:
-            obj.bs_info = BlueStoreDevices.from_json(v)
+            obj.bs_info = BlueStoreDevices.convert(v)
 
         return obj
 
 
 @dataclass
-class OSDMapPool(JsonBase):
+class OSDMapPool(ConvBase):
     pool: int
     pool_name: str
     flags: int
@@ -763,9 +768,6 @@ class OSDMapPool(JsonBase):
     pg_num: int
     pg_placement_num: int
     crash_replay_interval: int
-    last_change: int
-    last_force_op_resend: int
-    last_force_op_resend_preluminous: int
     auid: int
     snap_mode: str
     snap_seq: int
@@ -801,12 +803,15 @@ class OSDMapPool(JsonBase):
     fast_read: bool
     options: Dict[str, Any]
     application_metadata: Dict[str, Any]
+    last_change: int = field(converter=int)
+    last_force_op_resend: int = field(converter=int)
+    last_force_op_resend_preluminous: int = field(converter=int)
 
 
 @dataclass
-class OSDMap(JsonBase):
+class OSDMap(ConvBase):
     @dataclass
-    class OSD(JsonBase):
+    class OSD(ConvBase):
         osd: int
         uuid: str
         weight: float
@@ -821,12 +826,12 @@ class OSDMap(JsonBase):
         cluster_addr: EndpointAddr
         heartbeat_back_addr: EndpointAddr
         heartbeat_front_addr: EndpointAddr
-        state: Set[OSDState] = js(converter=lambda v: {OSDState[name] for name in v})
-        in_: bool = js(key='in', converter=lambda x: x == 1)
-        up: bool = js(converter=lambda x: x == 1)
+        state: Set[OSDState] = field(converter=lambda v: {OSDState[name] for name in v})
+        in_: bool = field(key='in', converter=lambda x: x == 1)
+        up: bool = field(converter=lambda x: x == 1)
 
     @dataclass
-    class OSDXInfo(JsonBase):
+    class OSDXInfo(ConvBase):
         osd: int
         down_stamp: DateTime
         laggy_probability: float
@@ -857,14 +862,14 @@ class OSDMap(JsonBase):
     primary_temp: List[Any]
     blacklist: Dict[str, Any]
     erasure_code_profiles: Dict[str, Any]
-    flags: List[str] = js(converter=lambda v: v.split(","))
+    flags: List[str] = field(converter=lambda v: v.split(","))
 
 
 @from_cmd("ceph report", CephRelease.luminous)
 @dataclass
-class CephReport(JsonBase):
+class CephReport(ConvBase):
     @dataclass
-    class PoolsSum(JsonBase):
+    class PoolsSum(ConvBase):
         stat_sum: CephIOStats
         acting: int
         log_size: int
@@ -872,7 +877,7 @@ class CephReport(JsonBase):
         up: int
 
     @dataclass
-    class PGOnOSD(JsonBase):
+    class PGOnOSD(ConvBase):
         osd: int
         num_primary_pg: int
         num_acting_pg: int
@@ -908,12 +913,12 @@ class CephReport(JsonBase):
     osd_stats: List[Dict[str, Any]]
     paxos: Dict[str, Any]
 
-    version: CephVersion = js(converter=parse_ceph_version_simple)
-    num_pg_by_state: List[Tuple[Set[PGState], int]] = js(noauto=True)
+    version: CephVersion = field(converter=parse_ceph_version_simple)
+    num_pg_by_state: List[Tuple[Set[PGState], int]] = field(noauto=True)
 
     @classmethod
-    def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
-        obj = super().from_json(v)
+    def convert(cls: Type[T], v: Dict[str, Any]) -> T:
+        obj = super().convert(v)
         num_pg_by_state = []
         for st in v['num_pg_by_state']:
             states = {PGState[name] for name in st['state'].split("+")}
@@ -940,7 +945,7 @@ def lvtags_parser(v: str) -> Dict[str, str]:
 
 
 @dataclass
-class LVMListDevice(JsonBase):
+class LVMListDevice(ConvBase):
     devices: List[Path]
     lv_name: str
     lv_path: Path
@@ -950,17 +955,17 @@ class LVMListDevice(JsonBase):
     tags: Dict[str, Any]
     type: str
     vg_name: str
-    lv_size: int = js(converter=from_ceph_str_size)
-    lv_tags: Dict[str, str] = js(converter=lvtags_parser)
+    lv_size: int = field(converter=from_ceph_str_size)
+    lv_tags: Dict[str, str] = field(converter=lvtags_parser)
 
 
 @dataclass
-class VolumeLVMList(JsonBase):
+class VolumeLVMList(ConvBase):
     osds: Dict[int, List[LVMListDevice]]
 
     @classmethod
-    def from_json(cls: Type[T], v: Dict[str, Any]) -> T:
+    def convert(cls: Type[T], v: Dict[str, Any]) -> T:
         osds = {}
         for key, items in v.items():
-            osds[int(key)] = [LVMListDevice.from_json(item) for item in items]
+            osds[int(key)] = [LVMListDevice.convert(item) for item in items]
         return cls(osds=osds)

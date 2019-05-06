@@ -1,0 +1,65 @@
+{
+   "summary" : {
+      "total_kb_used" : 38807424,
+      "total_kb_avail" : 118466688,
+      "max_var" : 1,
+      "dev" : 0,
+      "min_var" : 1,
+      "total_kb" : 157274112,
+      "average_utilization" : 24.675023
+   },
+   "stray" : [],
+   "nodes" : [
+      {
+         "kb_used" : 12935808,
+         "crush_weight" : 0.048996,
+         "id" : 1,
+         "kb_avail" : 39488896,
+         "type" : "osd",
+         "depth" : 2,
+         "name" : "osd.1",
+         "var" : 1,
+         "pgs" : 264,
+         "reweight" : 1,
+         "type_id" : 0,
+         "kb" : 52424704,
+         "utilization" : 24.675023,
+         "pool_weights" : {},
+         "device_class" : "hdd"
+      },
+      {
+         "type_id" : 0,
+         "reweight" : 1,
+         "kb" : 52424704,
+         "device_class" : "hdd",
+         "utilization" : 24.675023,
+         "pool_weights" : {},
+         "depth" : 2,
+         "name" : "osd.0",
+         "pgs" : 264,
+         "var" : 1,
+         "kb_avail" : 39488896,
+         "type" : "osd",
+         "kb_used" : 12935808,
+         "id" : 0,
+         "crush_weight" : 0.047989
+      },
+      {
+         "device_class" : "hdd",
+         "utilization" : 24.675023,
+         "pool_weights" : {},
+         "kb" : 52424704,
+         "reweight" : 1,
+         "type_id" : 0,
+         "pgs" : 264,
+         "var" : 1,
+         "name" : "osd.2",
+         "depth" : 2,
+         "type" : "osd",
+         "kb_avail" : 39488896,
+         "id" : 2,
+         "crush_weight" : 0.048996,
+         "kb_used" : 12935808
+      }
+   ]
+}

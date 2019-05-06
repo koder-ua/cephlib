@@ -1,13 +1,10 @@
 import sys
-import json
 
 from cephlib import RadosDF
 
-f1 = json.load(open(sys.argv[1]))
-f2 = json.load(open(sys.argv[2]))
 
-df1 = RadosDF.from_json(f1)
-df2 = RadosDF.from_json(f2)
+df1 = RadosDF.from_json(open(sys.argv[1]).read())
+df2 = RadosDF.from_json(open(sys.argv[2]).read())
 
 pools1 = {pool.name: pool for pool in df1.pools}
 pools2 = {pool.name: pool for pool in df2.pools}

@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import copy
 from pathlib import Path
 from dataclasses import dataclass, field
 from ipaddress import IPv4Network, IPv4Address
 from typing import Dict, Any, List, Optional, Union, Set, TypeVar, Iterable, Iterator, Tuple, cast
 
-from koder_utils import AttredDict, Array, Host, Disk, LogicBlockDev, JsonBase, js
+from koder_utils import AttredDict, Array, Host, Disk, LogicBlockDev, ConvBase, field as c_field
 
 from . import (PGStat, CephVersion, OSDStatus, CephMGR, RadosGW, CephStatus, CephReport, PGDump, OSDStoreType,
                CephIOStats, CrushMap, CrushRuleStepTake, CrushRuleStepEmit, CrushRuleStepChooseLeafFirstN,
@@ -305,13 +307,13 @@ class CephInfo:
 
 
 @dataclass
-class OSDDevCfg(JsonBase):
+class OSDDevCfg(ConvBase):
     type: str
-    data: Optional[Path] = js(default=None)
-    r_data: Optional[Path] = js(default=None)
-    db: Optional[Path] = js(default=None)
-    r_db: Optional[Path] = js(default=None)
-    wal: Optional[Path] = js(default=None)
-    r_wal: Optional[Path] = js(default=None)
-    r_journal: Optional[Path] = js(default=None)
-    journal: Optional[Path] = js(default=None)
+    data: Optional[Path] = c_field(default=None)
+    r_data: Optional[Path] = c_field(default=None)
+    db: Optional[Path] = c_field(default=None)
+    r_db: Optional[Path] = c_field(default=None)
+    wal: Optional[Path] = c_field(default=None)
+    r_wal: Optional[Path] = c_field(default=None)
+    r_journal: Optional[Path] = c_field(default=None)
+    journal: Optional[Path] = c_field(default=None)

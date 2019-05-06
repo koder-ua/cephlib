@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import collections
 import dataclasses
@@ -26,7 +28,7 @@ OSDDevInfo = Union[OSDBSDevices, OSDFSDevices]
 def parse_ceph_volumes_js(cephvollist_js: str) -> Dict[int, OSDDevInfo]:
     devs_for_osd: Dict[int, Dict[str, Path]] = {}
 
-    for osd_id, devs in VolumeLVMList.from_json(json.loads(cephvollist_js)).osds.items():
+    for osd_id, devs in VolumeLVMList.convert(json.loads(cephvollist_js)).osds.items():
         assert len(devs) == 1, "FixME"
         for dev in devs:
             assert len(dev.devices) == 1, "FixME"

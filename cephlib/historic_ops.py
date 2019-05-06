@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import os
 import random
@@ -163,7 +165,6 @@ def parse_description(descr: str) -> Tuple[ParseResult, Optional[OpDescription]]
     Get type for operation
     """
     rr = osd_op_re.match(descr)
-    print(descr, rr)
     if rr:
         pool, pg = get_pool_pg(rr)
         if rr.group('op') == 'read':
@@ -292,7 +293,7 @@ class IPackerBase(metaclass=abc.ABCMeta):
         elif rec_tp == RecId.ops:
             osd_id, ctime = cls.op_header.unpack(data[:cls.op_header.size])
             offset = cls.op_header.size
-            ops = []
+            ops: List[Dict[str, Any]] = []
             while offset < len(data):
                 params, offset = cls.unpack_op(data, offset)
                 params.update({"osd_id": osd_id, "time": ctime})
@@ -317,7 +318,7 @@ class IPackerBase(metaclass=abc.ABCMeta):
             assert isinstance(ctime, int), str(data)
             assert isinstance(ops, list), str(data)
             assert all(isinstance(rec, CephOp) for rec in ops)
-            packed = []  # type: List[bytes]
+            packed: List[bytes] = []
             for op in ops:
                 try:
                     packed.append(cls.pack_op(op))
