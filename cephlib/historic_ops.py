@@ -286,6 +286,8 @@ class IPackerBase(metaclass=abc.ABCMeta):
     def format_op(op: Dict[str, Any]) -> str:
         pass
 
+    op_header = Struct("!HI")
+
     @classmethod
     def unpack(cls, rec_tp: RecId, data: bytes) -> Any:
         if rec_tp in (RecId.pools, RecId.params, RecId.cluster_info):
@@ -302,8 +304,6 @@ class IPackerBase(metaclass=abc.ABCMeta):
         else:
             raise AssertionError(f"Unknown record type {rec_tp}")
 
-    op_header = Struct("!HI")
-
     @classmethod
     def pack_record(cls, rec_tp: RecId, data: Any) -> Optional[Tuple[RecId, bytes]]:
         if rec_tp in (RecId.pools, RecId.cluster_info, RecId.params):
@@ -314,10 +314,10 @@ class IPackerBase(metaclass=abc.ABCMeta):
             return rec_tp, data.encode()
         elif rec_tp == RecId.ops:
             osd_id, ctime, ops = data
-            assert isinstance(osd_id, int), str(data)
-            assert isinstance(ctime, int), str(data)
-            assert isinstance(ops, list), str(data)
-            assert all(isinstance(rec, CephOp) for rec in ops)
+            assert isinstance(osd_id, int), str(osd_id)
+            assert isinstance(ctime, int), str(ctime)
+            assert isinstance(ops, list), str(ops)
+            assert all(isinstance(rec, CephOp) for rec in ops), str([op for op in ops if not isinstance(op, CephOp)])
             packed: List[bytes] = []
             for op in ops:
                 try:
