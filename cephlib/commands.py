@@ -135,7 +135,7 @@ class CephCLI:
             return False
         return True
 
-    async def get_history_size_duration(self, osd_id: int) -> Optional[Tuple[int, float]]:
+    async def get_history_size_duration(self, osd_id: int) -> Optional[Tuple[int, int]]:
         """
         Get size and duration for historic_ops log
         """
@@ -147,7 +147,7 @@ class CephCLI:
             assert "osd_op_history_size" in size_js
         except (subprocess.SubprocessError, AssertionError):
             return None
-        return size_js["osd_op_history_size"], duration_js["osd_op_history_duration"]
+        return int(size_js["osd_op_history_size"]), int(duration_js["osd_op_history_duration"])
 
     async def get_historic(self, osd_id: int) -> Any:
         """
