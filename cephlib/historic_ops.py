@@ -17,7 +17,6 @@ decompress = bz2.decompress
 DEFAULT_DURATION = 600
 DEFAULT_SIZE = 20
 
-MAX_PG_VAL = (2 ** 16 - 1)
 MAX_POOL_VAL = 63
 MKS_TO_MS = 1000
 S_TO_MS = 1000
@@ -74,7 +73,7 @@ class CephOp:
         self.evt_map = dict(self.events)
 
     @classmethod
-    def parse_op(cls, op: OpRec) -> Tuple[ParseResult, Optional['CephOp']]:
+    def parse_op(cls, op: OpRec) -> Tuple[ParseResult, Optional[CephOp]]:
         try:
             res, descr = parse_description(op['description'])
         except AssertionError:

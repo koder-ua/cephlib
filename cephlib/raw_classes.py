@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address
 from typing import Dict, Any, List, Optional, Union, Set, TypeVar, Callable, Type, Tuple, cast
 
-from koder_utils import DiskType, ConvBase, field, IntArithmeticMixin, register_converter, ToInt
+from koder_utils import DiskType, ConvBase, field, IntArithmeticMixin, register_converter, ToInt, ToFloat
 
 T = TypeVar("T")
 
@@ -301,11 +301,11 @@ class OSDDf(ConvBase):
         type: str
         type_id: int
         utilization: float
-        var: int
+        var: float
 
     @dataclass
     class Summary(ConvBase):
-        dev: int
+        dev: float
         max_var: float
         min_var: float
         average_utilization: float
@@ -331,9 +331,13 @@ class CephStatus(ConvBase):
             summary: str
 
         checks: Dict[str, Any]
-        overall_status: CephStatusCode
         status: CephStatusCode
-        summary: List[Check]
+        summary: List[Check] = field(default_factory=list)
+        overall_status: Optional[CephStatusCode] = field(default=None)
+
+        def __post_init__(self) -> None:
+            if self.overall_status is None:
+                self.overall_status = self.status
 
     @dataclass
     class MonMap(ConvBase):
@@ -536,8 +540,8 @@ class PGStat(ConvBase):
     parent_split_bits: int
     pgid: PGId
     pin_stats_invalid: bool
-    reported_epoch: int
-    reported_seq: int
+    reported_epoch: ToInt
+    reported_seq: ToInt
     stats_invalid: bool
     up: List[int]
     up_primary: int
@@ -833,7 +837,7 @@ class OSDMap(ConvBase):
     @dataclass
     class OSDXInfo(ConvBase):
         osd: int
-        down_stamp: DateTime
+        down_stamp: Union[DateTime, ToFloat]
         laggy_probability: float
         laggy_interval: int
         features: int

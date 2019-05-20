@@ -185,7 +185,6 @@ def pack_historic(ops: List[CephOp], fields: HistoricFields, extra: Any = None) 
                 try:
                     res[key_v] = array.array("B", data).tobytes()
                 except OverflowError:
-                    print("\n\n>>>>>>>>>>>>>>>>>>>>", key)
                     logger.error(f"Too large value in array {key}")
                     raise
 
