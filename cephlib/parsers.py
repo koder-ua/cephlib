@@ -57,14 +57,14 @@ def parse_ceph_disk_js(cephdisklist_js: str) -> Dict[int, OSDDevInfo]:
             if "cluster" in part_info and part_info.get('type') == 'data':
                 osd_id = int(part_info['whoami'])
                 if "journal_dev" in part_info:
+                    data = part_info['path']
+                    journal = part_info.get('journal_dev', data)
+                    devs_for_osd[osd_id] = OSDFSDevices(Path(journal), Path(data))
+                else:
                     block = part_info['block_dev']
                     db = part_info.get("block.db_dev", block)
                     wal = part_info.get("block.wal_dev", db)
                     devs_for_osd[osd_id] = OSDBSDevices(Path(db), Path(wal), Path(block))
-                else:
-                    data = part_info['path']
-                    journal = part_info.get('journal_dev', data)
-                    devs_for_osd[osd_id] = OSDFSDevices(Path(journal), Path(data))
     return devs_for_osd
 
 

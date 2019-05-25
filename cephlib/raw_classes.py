@@ -448,8 +448,8 @@ class MonMetadata(ConvBase):
     kernel_description: str
     kernel_version: str
     os: str
-    mem_swap_kb: int
-    mem_total_kb: int
+    mem_swap_kb: ToInt
+    mem_total_kb: ToInt
 
 
 @from_cmd("ceph mon metadata", CephRelease.luminous)
@@ -634,7 +634,7 @@ STEP_MAP: Dict[str, Callable[[Any], CrushRuleStep]] = {
     'take': CrushRuleStepTake.convert,
     'chooseleaf_firstn': CrushRuleStepChooseLeafFirstN.convert,
     'chooseleaf_indep': CrushRuleStepChooseLeafIndepth.convert,
-    'emit': lambda _: CrushRuleStepEmit
+    'emit': lambda _: CrushRuleStepEmit()
 }
 
 
@@ -661,18 +661,18 @@ class CrushMap(ConvBase):
         @dataclass
         class Item(ConvBase):
             id: int
-            weight: int
             pos: int
+            weight: float = field(converter=lambda v: float(v) / 65536.)
 
         id: int
         name: str
         type_id: int
         type_name: str
-        weight: float
         alg: Optional[CrushAlg]
         hash: Optional[HashAlg]
         items: List[Item]
         class_name: Optional[str] = field(default=None)
+        weight: float = field(converter=lambda v: float(v) / 65536.)
 
         @property
         def is_osd(self) -> bool:

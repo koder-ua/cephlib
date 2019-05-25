@@ -215,7 +215,7 @@ def get_hl_timings(tp: OpType, evt_map: Dict[str, int]) -> HLTimings:
     if tp in (OpType.write_primary, OpType.write_secondary):
         download = qpg_at
         if tp == OpType.write_primary:
-            assert subop != -1
+            assert subop != -1, evt_map
             assert last_replica_done != -1
             wait_for_replica = subop - last_replica_done
     else:

@@ -250,12 +250,15 @@ def unpack_historic(data: bytes) -> Tuple[Any, Iterator[Dict[str, Any]]]:
 
 def extract_pg_dump_info(pg_dump_s: str) -> Dict[str, Union[List[str], List[int]]]:
     res: Dict[str, Union[List[str], List[int]]] = collections.defaultdict(list)
-    for pg_info in json.loads(pg_dump_s)['pg_stats']:
+    pgdump = json.loads(pg_dump_s)
+    for pg_info in pgdump['pg_stats']:
         info = {'pgid': pg_info['pgid'], 'acting': pg_info['acting']}
         info.update(pg_info['stat_sum'])
         for key, val in info.items():
             res[key].append(val)
-    return {key: list(vals) for key, vals in res.items()}
+    res = {key: list(vals) for key, vals in res.items()}
+    res['stamp'] = pgdump['stamp']
+    return res
 
 
 def pack_record(rec_tp: RecId, data: Any) -> Optional[Tuple[RecId, bytes]]:
